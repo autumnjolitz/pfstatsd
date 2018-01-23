@@ -7,23 +7,29 @@ import random
 import socket
 import time
 from enum import Enum
-from ipaddress import ip_address
+from ipaddress import ip_address, IPv4Address, IPv6Address
 
 import aiodns
 
 
 logger = logging.getLogger(__name__)
 
-class PingPreamble(collections.namedtuple('PingPreamble', 'host')):
+class PingPreamble(collections.namedtuple('PingPreamble', ('ip', 'host'))):
     __slots__ = ()
-    def __new__(cls, host):
+
+    def __new__(cls, host, ip=None):
         if isinstance(host, bytes):
             host = host.decode('utf8')
-        return super().__new__(cls, host)
+        return super().__new__(cls, ip or host, host)
+
+    def __str__(self):
+        return f'PING {self.host} ({self.ip}): 56 data bytes'
+
 
 class ICMPResponse(collections.namedtuple(
         'ICMPResponse', ['host', 'time_ms', 'icmp_seq', 'ttl', 'packet_size_bytes'])):
     __slots__ = ()
+
     def __new__(cls, host, time_ms, icmp_seq, ttl, packet_size_bytes):
         if isinstance(host, bytes):
             host = host.decode('utf8')
@@ -39,13 +45,20 @@ class ICMPResponse(collections.namedtuple(
     def lost(self):
         return self.host is None or math.isinf(self.time_ms)
 
+    def __str__(self):
+        return f'{self.packet_size_bytes} bytes from {self.host}: ' \
+               f'icmp_seq={self.icmp_seq} ttl={self.ttl} time={self.time_ms} ms'
+
 
 class Unit(Enum):
     Seconds = 1
     Packets = 2
 
+
 class ExitAfterPolicy(object):
+
     __slots__ = ('value', 'unit', 'other_policies')
+
     def __init__(self, value, unit, other_policies=None):
         assert isinstance(value, (int, float))
         assert isinstance(unit, Unit)
@@ -69,47 +82,56 @@ class ExitAfterPolicy(object):
         assert isinstance(other, self.__class__)
         return self.__class__(self.value, self.unit, other_policies=self.other_policies + (other,))
 
+async def random_resolve(host, resolver: aiodns.DNSResolver=None, *,
+                         sock_types=(socket.AF_INET, socket.AF_INET6), loop=None):
+    try:
+        return ip_address(host)
+    except ValueError:
+        resolver = resolver or aiodns.DNSResolver(loop=loop or asyncio.get_event_loop())
+        for sock_type in sock_types:
+            try:
+                result = await resolver.gethostbyname(host, sock_type)
+                ips = result.addresses
+            except aiodns.error.DNSError:
+                continue
+            else:
+                if not ips:
+                    continue
+                return ip_address(random.choice(ips))
+        raise ValueError(f'Unable to get an ip address for {host}')
 
-async def ping(host, resolver: aiodns.DNSResolver=None, resolve_ttl=100, socket_type=socket.AF_INET, exit_after=None):
+
+async def ping(host, exit_after=None,
+               resolver: aiodns.DNSResolver=None, sock_types=(socket.AF_INET, socket.AF_INET6)):
     '''
     :resolve_ttl: int: if we resolve a list of ip addresses, how many pings should we
         try before switching ip address/re-resolve it? If you specify a raw ip,
         we will not ever re-resolve it.
     '''
     assert exit_after is None or isinstance(exit_after, ExitAfterPolicy)
-    assert resolve_ttl > 0 or resolve_ttl == -1
-    ping_command = 'ping'
-    if socket_type == socket.AF_INET6:
-        ping_command = 'ping6'
+    assert isinstance(host, (str, IPv4Address, IPv6Address))
+    ip = host
+    if isinstance(host, str):
+        ip = await random_resolve(host, sock_types=sock_types)
 
-    program_arguments = lambda ip: (ping_command, ip)
-    try:
-        ips = [ip_address(host)]
-        ip_ttl = -1
-    except ValueError:
-        if resolver is None:
-            raise ValueError('you must specify an aiodns.DNSResolver!')
-        result = await resolver.gethostbyname(host, socket_type)
-        logger.debug('Resolved {} -> {} (up to 10)'.format(host, result.addresses[:10]))
-        ips = [ip_address(x) for x in result.addresses]
-        if resolve_ttl > 0:
-            program_arguments = lambda ip: (ping_command, '-c', str(resolve_ttl), ip)
+    ping_command = 'ping'
+    if isinstance(host, IPv6Address):
+        ping_command = 'ping6'
 
     packet_count = 0
     t_s = time.time()
-    while exit_after is None or not exit_after.poll(time.time() - t_s, packet_count):
-        ip = str(random.choice(ips))
-        last_seq_index = None
-        program_exited = False
-
+    last_seq_index = None
+    program_exited = False
+    try:
         ping_handle = await asyncio.create_subprocess_exec(
-            *program_arguments(ip),
+            ping_command, str(host),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-
-        while (exit_after is None or not exit_after.poll(time.time() - t_s, packet_count)) and \
-                not program_exited:
+        should_exit = lambda *args: False
+        if exit_after:
+            should_exit = exit_after.poll
+        while not should_exit(time.time() - t_s, packet_count):
             ready, pending = await asyncio.wait(
-                (ping_handle.stdout.readline(), ping_handle.stderr.readline()),
+                (ping_handle.stderr.readline(), ping_handle.stdout.readline(),),
                 return_when=asyncio.FIRST_COMPLETED)
             for p in pending:
                 p.cancel()
@@ -120,11 +142,14 @@ async def ping(host, resolver: aiodns.DNSResolver=None, resolve_ttl=100, socket_
 
                 try:
                     packet = parse_line(line)
+                except Exception:
+                    logger.exception(f'Unable to parse {line!r}')
+                else:
                     if packet is None:
                         # Garbage line...
                         continue
                     if isinstance(packet, PingPreamble):
-                        logger.debug(f'Starting ping to {ip}')
+                        yield packet._replace(host=host)
                         continue
                     if packet.lost:
                         packet = packet._replace(host=ip)
@@ -136,11 +161,18 @@ async def ping(host, resolver: aiodns.DNSResolver=None, resolve_ttl=100, socket_
                     yield packet
                     packet_count += 1
                     last_seq_index = packet.icmp_seq
-                except Exception:
-                    logger.exception(f'Unable to parse {line!r}')
-        if not program_exited:
+            if program_exited:
+                break
+        if ping_handle.returncode is None:
+            await ping_handle.wait()
+        if ping_handle.returncode:
+            raise ValueError(ping_handle.returncode, 'Non-zero exit code')
+        ping_handle = None
+    except asyncio.CancelledError:
+        if ping_handle:
             ping_handle.terminate()
-        await ping_handle.wait()
+            await ping_handle.wait()
+        raise
 
 
 class ParseMode(Enum):
@@ -207,6 +239,8 @@ def parse_line(line: bytes):
             else:
                 packet_size_unit = values.pop('packet_size_unit')
                 assert packet_size_unit == b'bytes', f'packet size is {packet_size_unit!r}'
+                del packet_size_unit
+
                 values['packet_size_bytes'] = values.pop('packet_size')
                 values['time_ms'] = to_ms(*values.pop('time').split(' '))
                 del values['_']
@@ -214,13 +248,35 @@ def parse_line(line: bytes):
         buf.append(char)
     return ICMPResponse(**values)
 
+async def main(host, exit_policy=None):
+    resolver = aiodns.DNSResolver()
+    loss_count = 0
+    count = 0
+    try:
+        async for packet in ping(host, exit_policy, resolver=resolver):
+            logger.info(str(packet))
+            if isinstance(packet, ICMPResponse):
+                count += 1
+                if packet.lost:
+                    loss_count += 1
+    except asyncio.CancelledError:
+        logger.info(
+            '--- {} ping statistics ---\n'
+            '{} packets transmitted, {} packets received, {:.2f}% packet loss'.format(
+                args.destination, count, loss_count, loss_count/count))
+        return
+    except Exception:
+        logger.exception('Uncaught exception')
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('destination', type=str)
     parser.add_argument('-t', '--time-limit', default=None, type=float)
     parser.add_argument('-c', '--count', default=None, type=int)
-    parser.add_argument('-d', '--debug', default=logging.INFO, action='store_const', const=logging.DEBUG)
+    parser.add_argument('-d', '--debug', default=logging.INFO, action='store_const',
+                        const=logging.DEBUG)
 
     args = parser.parse_args()
     logger.setLevel(args.debug)
@@ -237,22 +293,15 @@ if __name__ == '__main__':
             exit_policy |= item
 
     loop = asyncio.get_event_loop()
-    resolver = aiodns.DNSResolver(loop=loop)
-    loss_count = 0
-    count = 0
-    async def main():
-        global loss_count
-        global count
-        async for packet in ping(args.destination, resolver, exit_after=exit_policy):
-            print(packet)
-            count += 1
-            if packet.lost:
-                loss_count += 1
+    task = asyncio.ensure_future(main(args.destination, exit_policy))
     try:
-        loop.run_until_complete(main())
+        loop.run_until_complete(task)
     except KeyboardInterrupt:
-        print('{} -> {} sent -> {} lost -> loss rate: {}'.format(
-            args.destination, count, loss_count, loss_count/count))
+        # Inject the cancellation
+        task.cancel()
+        # resume the stack
+        loop.run_until_complete(task)
+        # drain result
+        task.result()
     finally:
         loop.close()
-
