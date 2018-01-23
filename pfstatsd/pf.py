@@ -15,25 +15,30 @@ class QueueMetrics(collections.namedtuple('QueueMetrics', ['name', 'children', '
     __slots__ = ()
 
 
-def parse_metric(line):
+def parse_metric(line: str) -> dict:
     has_metric_name = False
     metric_name = None
     has_metric_value = False
     buf = []
-    values = {}
+    metrics = {}
     prev_char = None
     for char in line[1:-1]:
         if char == ':' and not has_metric_name:
             has_metric_name = True
+            # lines often have something like "metric pkts ### bytes ####", so dupe the key name
             if metric_name and metric_name.endswith('pkts'):
-                buf.insert(0, '{}'.format(metric_name))
+                buf.insert(0, metric_name)
+
+                # [key, 'bytes'] -> [key, ' ', 'bytes']
                 if buf[1] != ' ':
                     buf.insert(1, ' ')
+
             metric_name = ''.join(buf).strip().replace(' ', '_')
             metric_name = METRIC_ALIASES.get(metric_name, metric_name)
 
             buf[:] = []
             continue
+
         if char.isdigit() and not has_metric_value and has_metric_name:
             has_metric_value = True
         elif has_metric_value and char == ' ' and prev_char != '/':
@@ -44,12 +49,12 @@ def parse_metric(line):
                 value = int(value[:value.index('/')]) / float(value[value.index('/')+1:])
             else:
                 value = int(value, 10)
-            values[metric_name] = value
+            metrics[metric_name] = value
             buf[:] = []
             continue
         buf.append(char)
         prev_char = char
-    return values
+    return metrics
 
 
 def parse_queue(stdout):
@@ -104,8 +109,7 @@ def summarize_children(queues: dict) -> dict:
             for metric_name, value in child_queue_data.items():
                 parent_data[metric_name] += value
         for key, value in parent_data.items():
-            # currently the only float is a queue load factor, so average:
-            if isinstance(value, float):
+            if key == 'queue_load_factor':
                 parent_data[key] = value / len(children)
     return queues
 
