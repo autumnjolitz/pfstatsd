@@ -7,6 +7,7 @@ from setuptools import (setup, find_packages)
 
 here = path.abspath(path.dirname(__file__))
 install_requirements = [
+    'aiodns~=1.1.1'
 ]
 
 # The following are meant to avoid accidental upload/registration of this
