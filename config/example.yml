@@ -1,0 +1,15 @@
+# Where to send metrics to...
+graphite:
+  host: 127.0.0.1
+  port: 2004
+
+# hosts to ping until the program runs out of time or ping dies
+remote_hosts:
+  - google.com
+  - yahoo.com
+# reading pfctl often requires sudo assistance
+# although I've had success with allowing group read
+# access on /dev/pf for BSD.
+# If sudo is to work, you'd need NOPASSWD access to pfctl in some form like
+#     username    ALL= NOPASSWD: /sbin/pfctl -s queue -v
+use_sudo: true
