@@ -45,3 +45,10 @@ def parse_host(hostname, default_port):
             if port:
                 port = int(port, 10)
     return hostname, port
+
+
+class AbnormalExit(ValueError):
+    def __init__(self, code, message):
+        self.code = code
+        self.message = message
+        super().__init__(code, message)
