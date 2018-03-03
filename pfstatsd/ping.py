@@ -4,12 +4,15 @@ import itertools
 import logging
 import math
 import random
+import signal
 import socket
 import time
 from enum import Enum
 from ipaddress import ip_address, IPv4Address, IPv6Address
 
 import aiodns
+
+from . import AbnormalExit
 
 
 logger = logging.getLogger(__name__)
@@ -102,7 +105,8 @@ async def random_resolve(host, resolver: aiodns.DNSResolver=None, *,
 
 
 async def ping(host, exit_after=None,
-               resolver: aiodns.DNSResolver=None, sock_types=(socket.AF_INET, socket.AF_INET6)):
+               resolver: aiodns.DNSResolver=None, sock_types=(socket.AF_INET, socket.AF_INET6),
+               *, loop=None):
     '''
     :resolve_ttl: int: if we resolve a list of ip addresses, how many pings should we
         try before switching ip address/re-resolve it? If you specify a raw ip,
@@ -112,7 +116,7 @@ async def ping(host, exit_after=None,
     assert isinstance(host, (str, IPv4Address, IPv6Address))
     ip = host
     if isinstance(host, str):
-        ip = await random_resolve(host, sock_types=sock_types)
+        ip = await random_resolve(host, resolver=resolver, sock_types=sock_types, loop=loop)
 
     ping_command = 'ping'
     if isinstance(host, IPv6Address):
@@ -164,16 +168,16 @@ async def ping(host, exit_after=None,
             if program_exited:
                 break
         if ping_handle.returncode is None:
+            ping_handle.send_signal(signal.SIGINT)
             await ping_handle.wait()
         if ping_handle.returncode:
-            raise ValueError(ping_handle.returncode, 'Non-zero exit code')
+            raise AbnormalExit(ping_handle.returncode, 'Non-zero exit code')
         ping_handle = None
     except asyncio.CancelledError:
         if ping_handle:
             ping_handle.terminate()
             await ping_handle.wait()
         raise
-
 
 class ParseMode(Enum):
     VALUE = 1
