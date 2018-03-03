@@ -60,6 +60,8 @@ def parse_metric(line: str) -> dict:
 
 
 def parse_queue(stdout):
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode('utf8')
     queues = {}
     current_queue = None
     for line in stdout.splitlines(True):
