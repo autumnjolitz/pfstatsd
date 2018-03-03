@@ -18,13 +18,13 @@ Length = int
 
 
 class Session:
-    def __init__(self, host, port, namespace='', queue_max: Length=100, delay_max: Seconds=10):
+    def __init__(self, host, port=2004, namespace='', queue_max: Length=100, delay_max: Seconds=10):
         assert isinstance(port, int) and port > 0
         assert host and isinstance(host, str)
         assert isinstance(queue_max, int) and queue_max > 0 or queue_max == -1, \
             'Non-zero queue limit or -1 to disable'
         assert delay_max > 0 or delay_max == -1, 'Non-zero delays required or -1 to disable'
-        assert all(char in ('.', '_') or char.isalnum() for char in namespace), \
+        assert all(char in ('.', '_', '-') or char.isalnum() for char in namespace), \
             f'Namespaces ({namespace!r}) must be in regex of [A-Za-z0-9\.]'
 
         self.host = host
@@ -42,6 +42,7 @@ class Session:
         if event_loop is None:
             event_loop = asyncio.get_event_loop()
         self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.conn.setblocking(False)
         await event_loop.sock_connect(self.conn, (self.host, self.port))
         return self.conn
 
