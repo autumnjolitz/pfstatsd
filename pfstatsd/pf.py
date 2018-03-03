@@ -3,6 +3,7 @@ import logging
 import asyncio
 import subprocess
 import shlex
+from typing import Generator, Tuple
 from . import AbnormalExit
 
 logger = logging.getLogger(__name__)
@@ -13,8 +14,13 @@ METRIC_ALIASES = {
 }
 
 
-class QueueMetrics(collections.namedtuple('QueueMetrics', ['name', 'children', 'metrics'])):
+class QueueMetrics(collections.namedtuple('QueueMetrics', ['name', 'children', 'metrics', 'parent'])):
     __slots__ = ()
+
+    def __new__(cls, name, children, metrics, parent=None):
+        return super().__new__(cls, name, children, metrics, parent)
+
+
 
 
 def parse_metric(line: str) -> dict:
@@ -99,22 +105,48 @@ def parse_queue(stdout):
         queue_name: QueueMetrics(**queue) for queue_name, queue in queues.items()
     }
 
+def apply_parents(queues) -> Generator[Tuple[str, QueueMetrics], None, None]:
+    reparented_keys = set()
+    for name, queue in queues.items():
+        for child_name in queue.children:
+            child_queue = queues[child_name]
+            assert child_queue.parent is None
+            # Nodes that have been parented are unique and can be emitted immediately.
+            yield child_name, child_queue._replace(parent=name)
+            reparented_keys.add(child_name)
+    for name in queues.keys() - reparented_keys:
+        yield name, queues[name]
+
 
 def summarize_children(queues: dict) -> dict:
     '''
     All parent queues have zeroed counters.
 
-    TODO: This really should flatten from bottom -> root node or else bad things happen
+    So apply all the outer edges with metric values to the parent nodes
     '''
-    for queue_name, parent_data in ((queue, data) for queue, data in queues.items()
-                                    if data.children):
-        children = queues[queue_name].children
-        for child_queue_data in (queues[queue_name] for queue_name in children):
-            for metric_name, value in child_queue_data.items():
-                parent_data[metric_name] += value
-        for key, value in parent_data.items():
-            if key == 'queue_load_factor':
-                parent_data[key] = value / len(children)
+    averaged_nodes = set()
+    parents = []
+    edges = tuple(queue for name, queue in queues.items() if not queue.children)
+    for node in edges:
+        metrics_to_apply = node.metrics
+
+        while node.parent:
+            for metric_name, value in metrics_to_apply.items():
+                queues[node.parent].metrics[metric_name] += value
+            node = queues[node.parent]
+    stack = list(edges)
+    while stack:
+        node = stack.pop(0)
+        if node.parent is None:
+            assert not stack
+            break
+        parent = queues[node.parent]
+        if parent.name in averaged_nodes:
+            continue
+        parent.metrics['queue_load_factor'] /= len(parent.children)
+        averaged_nodes.add(parent.name)
+        stack.append(parent)
+
     return queues
 
 
@@ -130,7 +162,7 @@ async def read_queue_status():
     if fh.returncode:
         raise AbnormalExit(fh.returncode, stderr)
     await fh.wait()
-    queues = summarize_children(parse_queue(stdout))
+    queues = summarize_children(apply_parents(parse_queue(stdout)))
     return queues
 
 async def stream_queue_status():
