@@ -13,11 +13,11 @@ logger = logging.getLogger('pfstatsd')
 
 async def monitor_pf_queue(session, duration=-1, delay=0.5):
     '''
-    Monitor the queue status, send metrics to host:port, 
+    Monitor the queue status, send metrics to host:port
     '''
     t_s = time.time()
     num_sent = 0
-    session = session.using('pf')
+    session = session.using('pf', join=True)
     await session.connect()
     logger.info(f'Reading queue status, duration limit set to {duration}')
 
@@ -34,7 +34,7 @@ async def monitor_pf_queue(session, duration=-1, delay=0.5):
 
 
 async def monitor_remote_icmp(session, host, policy, resolver):
-    session = session.using('ping.{}'.format(host.replace('.', '-')))
+    session = session.using('ping.{}'.format(host.replace('.', '-')), join=True)
     await session.connect()
     num_sent = 0
     try:
@@ -57,8 +57,8 @@ async def monitor_remote_icmp(session, host, policy, resolver):
     else:
         logger.debug(f'Done with {host}')
 
-async def main(host, port, duration=-1, *icmp_hosts):
-    session = Session(host, port, delay_max=1)
+async def main(host, port, duration=-1, namespace='', *icmp_hosts):
+    session = Session(host, port, delay_max=1, namespace=namespace)
     if icmp_hosts:
         resolver = aiodns.DNSResolver()
         policy = None
@@ -95,10 +95,15 @@ if __name__ == '__main__':
     subparsers = parser.add_subparsers()
     config_parser = subparsers.add_parser('from')
     config_parser.add_argument('config_file', type=argparse.FileType('rb'), help='config file')
-    config_parser.add_argument('-t', '--time-limit', type=float, default=-1, help='Limit on how long this runs')
+    config_parser.add_argument(
+        '-t', '--time-limit', type=float, default=-1, help='Limit on how long this runs')
 
     run_parser = subparsers.add_parser('run')
-    run_parser.add_argument('-t', '--time-limit', type=float, default=-1, help='Limit on how long this runs')
+    run_parser.add_argument(
+        '-n', '--namespace', type=str, help='graphite namespace to write to, defautls to \'\'',
+        default='')
+    run_parser.add_argument(
+        '-t', '--time-limit', type=float, default=-1, help='Limit on how long this runs')
     run_parser.add_argument('host', help='graphite host:[port] combo')
     run_parser.add_argument('remote_hosts', help='hosts to ping', nargs='+')
 
@@ -123,10 +128,12 @@ if __name__ == '__main__':
         host, port = config['graphite']['host'], config['graphite']['port']
         if 'time_limit' in config:
             args.time_limit = config['time_limit']
+        args.namespace = config.get('namespace', '')
         args.remote_hosts = config['remote_hosts']
     if args.use_sudo:
         from . import pf
         pf.READ_QUEUE_STATUS = f'sudo {pf.READ_QUEUE_STATUS}'
 
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(main(host, port, args.time_limit, *args.remote_hosts))
+    loop.run_until_complete(main(
+        host, port, args.time_limit, args.namespace, *args.remote_hosts))

@@ -51,7 +51,7 @@ class Session:
             self.conn.close()
             self.conn = None
 
-    def using(self, namespace: str, **kwargs):
+    def using(self, namespace: str, join=False, **kwargs):
         new_cls_kwargs = {
             'host': self.host,
             'port': self.port,
@@ -61,6 +61,8 @@ class Session:
         }
         new_cls_kwargs.update({
             key: kwargs[value] for key, value in kwargs.keys() & new_cls_kwargs.keys()})
+        if join and self.namespace:
+            new_cls_kwargs['namespace'] = f'{self.namespace}.{new_cls_kwargs["namespace"]}'
 
         item = self.__class__(**new_cls_kwargs)
         if 'conn' in kwargs:
