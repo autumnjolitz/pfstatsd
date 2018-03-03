@@ -37,16 +37,20 @@ async def monitor_remote_icmp(session, host, policy, resolver):
     session = session.using('ping.{}'.format(host.replace('.', '-')), join=True)
     await session.connect()
     num_sent = 0
+    packets_seen = 0
+    packets_lost = 0
     try:
         async for packet in ping(host, policy, resolver=resolver):
             logger.debug(f'{host}->{packet!s}, {num_sent} sent so far')
             if isinstance(packet, ICMPResponse):
-                num_sent += await session.post('packets.sent', 1)
+                packets_seen += 1
+                num_sent += await session.post('packets.sent', packets_seen)
                 if packet.lost:
-                    num_sent += await session.post('packets.lost', 1)
+                    packets_lost += 1
+                    num_sent += await session.post('packets.lost', packets_lost)
                     continue
                 num_sent += await session.post('latency_ms', packet.time_ms)
-                num_sent += await session.post('packets.recv', 1)
+                num_sent += await session.post('packets.recv', packets_seen)
     except AbnormalExit as e:
         logger.exception(f'Unexpected exit for {host}, code {e.code}')
     except asyncio.CancelledError:
