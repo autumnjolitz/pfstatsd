@@ -3,8 +3,10 @@ import logging
 import asyncio
 import subprocess
 import shlex
+from . import AbnormalExit
 
 logger = logging.getLogger(__name__)
+READ_QUEUE_STATUS = 'pfctl -s queue -v'
 
 METRIC_ALIASES = {
     'qlength': 'queue_load_factor'
@@ -116,12 +118,22 @@ def summarize_children(queues: dict) -> dict:
 
 async def read_queue_status():
     fh = await asyncio.create_subprocess_exec(
-        *shlex.split('pfctl -s queue -v'), stdout=subprocess.PIPE,
+        *shlex.split(READ_QUEUE_STATUS), stdout=subprocess.PIPE,
         stderr=subprocess.PIPE)
     stdout, stderr = await fh.communicate()
     logger.debug('got {} bytes from pfctl -s queue -v'.format(len(stdout)))
     if stderr:
-        logger.error('pfctl error: {}'.format(stderr.decode('utf8').strip()))
+        stderr = stderr.decode('utf8').strip()
+        logger.error(f'pfctl error: {stderr}')
+    if fh.returncode:
+        raise AbnormalExit(fh.returncode, stderr)
     await fh.wait()
     queues = summarize_children(parse_queue(stdout))
     return queues
+
+async def stream_queue_status():
+    while True:
+        logger.debug('Reading queue status')
+        queues = await read_queue_status()
+        queues = {key: value for key, value in queues.items() if not value['children']}
+        yield queues
