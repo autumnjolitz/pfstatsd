@@ -138,8 +138,7 @@ def summarize_children(queues: dict) -> dict:
     while stack:
         node = stack.pop(0)
         if node.parent is None:
-            assert not stack
-            break
+            continue
         parent = queues[node.parent]
         if parent.name in averaged_nodes:
             continue
