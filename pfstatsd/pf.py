@@ -168,5 +168,5 @@ async def stream_queue_status():
     while True:
         logger.debug('Reading queue status')
         queues = await read_queue_status()
-        queues = {key: value for key, value in queues.items() if not value['children']}
+        queues = {key: value for key, value in queues.items() if not value.children}
         yield queues
