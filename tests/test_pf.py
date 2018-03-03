@@ -84,3 +84,43 @@ def test_apply_parents():
     assert all(queue.parent for queue in reparented_queues.values() if queue.name != 'root')
     assert reparented_queues['child_a'].parent == 'group'
     assert reparented_queues['group'].parent == 'root'
+
+
+def test_apply_summarize():
+    queues = {
+            'root': QueueMetrics('root', ('group',), {
+                'pkts': 0,
+                'pkts_bytes': 0,
+                'dropped_pkts': 0,
+                'dropped_pkts_bytes': 0,
+                'queue_load_factor': 0.0
+            }),
+            'group': QueueMetrics('group', ('child_a', 'child_b'), {
+                'pkts': 0,
+                'pkts_bytes': 0,
+                'dropped_pkts': 0,
+                'dropped_pkts_bytes': 0,
+                'queue_load_factor': 0.0
+            }, None),
+            'child_a': QueueMetrics('child_a', (), {
+                'pkts': 5,
+                'pkts_bytes': 5,
+                'dropped_pkts': 1,
+                'dropped_pkts_bytes': 10,
+                'queue_load_factor': 50.0
+            }, None),
+            'child_b': QueueMetrics('child_b', (), {
+                'pkts': 5,
+                'pkts_bytes': 5,
+                'dropped_pkts': 10,
+                'dropped_pkts_bytes': 100,
+                'queue_load_factor': 25.0
+            }, None)
+        }
+    queues = summarize_children(dict(apply_parents(queues)))
+    assert sum(queues['root'].metrics.values()) > 0
+    assert sum(queues['group'].metrics.values()) > 0
+    assert queues['group'].metrics['queue_load_factor'] == (50+25) / 2
+    assert sum(value for key, value in queues['root'].metrics.items()
+               if key != 'queue_load_factor') == \
+        sum(value for key, value in queues['group'].metrics.items() if key != 'queue_load_factor')

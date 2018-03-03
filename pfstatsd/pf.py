@@ -162,7 +162,7 @@ async def read_queue_status():
     if fh.returncode:
         raise AbnormalExit(fh.returncode, stderr)
     await fh.wait()
-    queues = summarize_children(apply_parents(parse_queue(stdout)))
+    queues = summarize_children(dict(apply_parents(parse_queue(stdout))))
     return queues
 
 async def stream_queue_status():
