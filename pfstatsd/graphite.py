@@ -1,8 +1,6 @@
 import asyncio
 import logging
-import os
 import pickle
-import socket
 import struct
 import time
 from typing import Optional, Union
@@ -19,7 +17,8 @@ Length = int
 
 
 class Session:
-    def __init__(self, host, port=2004, namespace='', queue_max: Length=100, delay_max: Seconds=10):
+    def __init__(self, host, port=2004, namespace='', queue_max: Length=100,
+                 delay_max: Seconds=10):
         assert isinstance(port, int) and port > 0
         assert host and isinstance(host, str)
         assert isinstance(queue_max, int) and queue_max > 0 or queue_max == -1, \
@@ -62,7 +61,6 @@ class Session:
             name = f'{namespace}.{name}'
         self.queue.append((name, (timestamp or time.time(), value,)))
 
-
     async def post(self, name: str, value: Union[int, float],
                    timestamp: Optional[Union[int, float]]=None, namespace: Optional[str]=None,
                    *, loop=None):
@@ -86,8 +84,9 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         self.transport = None
         self._wait_for_connections = asyncio.Event()
         self._trigger_reconnect = asyncio.Event()
+        self._retry_future = None
 
-    def using(self, namespace: str, join=False, *, conn=False, **kwargs):
+    def using(self, namespace: str, join=False, *, conn=False, loop=None, **kwargs):
         client = super().using(namespace, join, **kwargs)
 
         if conn:
@@ -96,7 +95,7 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
             client._wait_for_connections.set()
             client._trigger_reconnect.clear()
 
-            future = asyncio.ensure_future(self.connect(loop=None))
+            client._retry_future = asyncio.ensure_future(self.connect(loop=loop))
         return client
 
     async def connect(self, *, loop=None):
@@ -105,19 +104,38 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
             await self._trigger_reconnect.wait()
             self._trigger_reconnect.clear()
             logger.debug('Invoking reconnect code')
+            self._retry_future = None
             return await self.connect(loop=loop)
 
         if loop is None:
             loop = asyncio.get_event_loop()
         logger.debug('Making connection to graphite')
-        await loop.create_connection(lambda: self, self.host, self.port)
+        index = 0
+        while True:
+            try:
+                await loop.create_connection(lambda: self, self.host, self.port)
+                break
+            except ConnectionRefusedError:
+                delay = 2 ** index
+                logger.error(
+                    f'Unable to connect to {self.host}:{self.port}, retrying in {delay:.2f}s')
+                await asyncio.sleep(delay)
+                index += 1
+                if index > 3:
+                    index = 0
+
         logger.debug('Making connection to graphite [done]')
-        future = asyncio.ensure_future(self.connect(loop=loop))
+
+        assert self._retry_future is None
+        self._retry_future = asyncio.ensure_future(self.connect(loop=loop))
         return self
 
     async def close(self):
         if self.transport is None:
             return
+        if self._retry_future:
+            self._retry_future.cancel()
+            self._retry_future = None
         self.transport.close()
         self.transport = None
 
