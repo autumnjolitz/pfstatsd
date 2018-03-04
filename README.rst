@@ -11,6 +11,7 @@ Goal is to establish visibility of bandwidth usage by client (using ``pfctl -s s
 Supports
 ----------
 
+- Autoreconnects to Graphite ✅
 - PF
     + ALTQ counters ✅
         - pkts/pkt bytes, queue length
