@@ -17,6 +17,7 @@ from . import AbnormalExit
 
 logger = logging.getLogger(__name__)
 
+
 class PingPreamble(collections.namedtuple('PingPreamble', ('ip', 'host'))):
     __slots__ = ()
 
@@ -85,6 +86,7 @@ class ExitAfterPolicy(object):
         assert isinstance(other, self.__class__)
         return self.__class__(self.value, self.unit, other_policies=self.other_policies + (other,))
 
+
 async def random_resolve(host, resolver: aiodns.DNSResolver=None, *,
                          sock_types=(socket.AF_INET, socket.AF_INET6), loop=None):
     try:
@@ -128,8 +130,9 @@ async def ping(host, exit_after=None,
     program_exited = False
     try:
         ping_handle = await asyncio.create_subprocess_exec(
-            ping_command, str(host),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            ping_command, str(host), stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.PIPE)
+
         should_exit = lambda *args: False
         if exit_after:
             should_exit = exit_after.poll
@@ -160,7 +163,7 @@ async def ping(host, exit_after=None,
                     if last_seq_index is not None and packet.icmp_seq - last_seq_index > 1:
                         logger.debug('Detected {} lost packets!'.format(
                             packet.icmp_seq - last_seq_index - 1))
-                        for lost_packet_index in range(last_seq_index+1, packet.icmp_seq):
+                        for lost_packet_index in range(last_seq_index + 1, packet.icmp_seq):
                             yield ICMPResponse(ip, float('inf'), lost_packet_index, 0, None)
                     yield packet
                     packet_count += 1
@@ -178,6 +181,7 @@ async def ping(host, exit_after=None,
             ping_handle.terminate()
             await ping_handle.wait()
         raise
+
 
 class ParseMode(Enum):
     VALUE = 1
@@ -204,7 +208,7 @@ def parse_line(line: bytes):
     # PING 127.0.0.1 (127.0.0.1): 56 data bytes\n
     if line.startswith(b'PING '):
         ip, _ = line.rsplit(b':', 1)
-        ip = ip[ip.rindex(b'(')+1:-1]
+        ip = ip[ip.rindex(b'(') + 1:-1]
         return PingPreamble(ip)
     values = {}
     buf = bytearray()
@@ -252,6 +256,7 @@ def parse_line(line: bytes):
         buf.append(char)
     return ICMPResponse(**values)
 
+
 async def main(host, exit_policy=None):
     resolver = aiodns.DNSResolver()
     loss_count = 0
@@ -267,7 +272,7 @@ async def main(host, exit_policy=None):
         logger.info(
             '--- {} ping statistics ---\n'
             '{} packets transmitted, {} packets received, {:.2f}% packet loss'.format(
-                args.destination, count, loss_count, loss_count/count))
+                args.destination, count, loss_count, loss_count / count))
         return
     except Exception:
         logger.exception('Uncaught exception')
