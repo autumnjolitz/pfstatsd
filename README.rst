@@ -8,6 +8,21 @@ Rewrite into Python 3 using asyncio.
 Goal is to establish visibility of bandwidth usage by client (using ``pfctl -s state -v``), upload bandwith QoS (``pfctl -s queue -v``).
 
 
+Supports
+----------
+
+- PF
+    + ALTQ counters ✅
+        - pkts/pkt bytes, queue length
+    + Number of connection states per internal client ❌
+    + Packet count to an internal client ❌
+- ICMP
+    + Latency ✅ 
+    + Sent/Recv ✅ 
+    + Lost packets ⚠️ (doesn't handle blackholes correctly yet)
+
+
+
 Quickstart
 ------------
 
