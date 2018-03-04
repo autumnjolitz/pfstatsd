@@ -23,23 +23,6 @@ Quickstart
 Issues
 --------
 
-OSX, localhost, uvloop
-*************************
-
-If you're on OSX and use localhost as your metrics destination with uvloop, you might encounter something like::
-
-    Traceback (most recent call last):
-      File "/Users/ben/software/pfstatsd/pfstatsd/__main__.py", line 21, in monitor_pf_queue
-        await session.connect()
-      File "/Users/ben/software/pfstatsd/pfstatsd/graphite.py", line 46, in connect
-        await event_loop.sock_connect(self.conn, (self.host, self.port))
-      File "uvloop/loop.pyx", line 2244, in sock_connect
-      File "uvloop/loop.pyx", line 922, in uvloop.loop.Loop._sock_connect
-    TypeError: getsockaddrarg() takes exactly 2 arguments (4 given)
-
-That seems to be provoked because uvloop seems to get confused with the dual binding of localhost to ``::1`` and ``127.0.0.1`` (which is what we're trying to connect to).
-
-
 No ALTQ support in kernel
 ****************************
 
