@@ -6,7 +6,7 @@ import yaml
 
 from . import DEFAULT_STDOUT_FORMAT, parse_host
 from .pf import stream_queue_status
-from .graphite import Session
+from .graphite import TCPGraphite
 from .ping import ping, ICMPResponse, AbnormalExit, ExitAfterPolicy, Unit
 
 logger = logging.getLogger('pfstatsd')
@@ -62,7 +62,7 @@ async def monitor_remote_icmp(session, host, policy, resolver):
         logger.debug(f'Done with {host}')
 
 async def main(host, port, duration=-1, namespace='', *icmp_hosts):
-    session = Session(host, port, delay_max=1, namespace=namespace)
+    session = TCPGraphite(host, port, delay_max=1, namespace=namespace)
     if icmp_hosts:
         resolver = aiodns.DNSResolver()
         policy = None
