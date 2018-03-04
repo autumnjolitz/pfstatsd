@@ -9,3 +9,5 @@ build/
 # Ignore OSX finder directories
 .DS_Store
 
+*.sublime-project
+*.sublime-workspace
