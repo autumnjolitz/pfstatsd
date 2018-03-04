@@ -6,7 +6,6 @@ import time
 from typing import Optional, Union
 
 from . import DEFAULT_STDOUT_FORMAT
-from . import uvloop
 from .protocols import ProtocolStateMachine
 
 
@@ -225,6 +224,7 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
 if __name__ == '__main__':
     import argparse
     from . import parse_host
+    from . import uvloop
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--debug', action='store_true', default=False)
@@ -249,6 +249,7 @@ if __name__ == '__main__':
     host, port = parse_host(args.host, default_port=2004)
 
     client = TCPGraphite(host, port)
+
     async def main(client, args):
         logger.debug(f'Connecting to {client.host}:{client.port}')
         await client.connect()
