@@ -18,7 +18,7 @@ Length = int
 
 class Session:
     def __init__(self, host, port=2004, namespace='', queue_max: Length=100,
-                 delay_max: Seconds=10):
+                 delay_max: Seconds=10, **kwargs):
         assert isinstance(port, int) and port > 0
         assert host and isinstance(host, str)
         assert isinstance(queue_max, int) and queue_max > 0 or queue_max == -1, \
@@ -79,12 +79,13 @@ class Session:
 
 
 class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, loop=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.transport = None
-        self._wait_for_connections = asyncio.Event()
-        self._trigger_reconnect = asyncio.Event()
+        self._wait_for_connections = asyncio.Event(loop=loop)
+        self._trigger_reconnect = asyncio.Event(loop=loop)
         self._retry_future = None
+        self._flush_before_connect = None
 
     def using(self, namespace: str, join=False, *, conn=False, loop=None, **kwargs):
         client = super().using(namespace, join, **kwargs)
@@ -175,21 +176,48 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         self.transport = None
 
     async def flush(self, loop=None):
-        await self._wait_for_connections.wait()
-
-        now = time.time()
         length = len(self.queue)
         if not length:
             return 0
 
-        if loop is None:
-            loop = asyncio.get_event_loop()
-        payload = pickle.dumps(self.queue[:length], protocol=2)
+        if self._flush_before_connect:
+            return 0
+        if not self._wait_for_connections.is_set():
+            self._flush_before_connect = asyncio.ensure_future(self._deferred_flush(), loop=loop)
+            return 0
+        return self._flush()
+
+    async def _deferred_flush(self):
+        '''Block until the connection is up.
+
+        This is used as a way to create a single task in the event loop responsible
+        for making sure paused metrics will be sent when connection is re-established.
+        '''
+        try:
+            await self._wait_for_connections.wait()
+            sent = self._flush()
+        except Exception:
+            logger.exception('Unexpected error in deferred flush')
+            raise
+        finally:
+            self._flush_before_connect = None
+        logger.info(f'Sent {sent} blocked metrics!')
+
+    def _flush(self):
+        length = len(self.queue)
+        now = time.time()
+        items = self.queue[:length]
+        payload = pickle.dumps(items, protocol=2)
         self.queue[:] = self.queue[length:]
 
         header = struct.pack("!L", len(payload))
         message = header + payload
-        self.transport.write(message)
+        try:
+            self.transport.write(message)
+        except IOError:
+            self.queue.extend(items)
+            raise
+        del items
         self.last_flush_ts = now
         return length
 
