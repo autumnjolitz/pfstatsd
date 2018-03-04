@@ -11,9 +11,12 @@ from .ping import ping, ICMPResponse, AbnormalExit, ExitAfterPolicy, Unit
 
 logger = logging.getLogger('pfstatsd')
 
+
 async def monitor_pf_queue(session, duration=-1, delay=0.5):
     '''
-    Monitor the queue status, send metrics to host:port
+    Monitor the queue status, send metrics to a defined session.
+
+    delay controls how often the queues are checked
     '''
     t_s = time.time()
     num_sent = 0
@@ -26,6 +29,7 @@ async def monitor_pf_queue(session, duration=-1, delay=0.5):
             # write the edge most queues to a flat key:
             for metric_name, value in queue_data.metrics.items():
                 num_sent += await session.post(f'{queue_name}.{metric_name}', value)
+                num_sent += await session.post(f'{queue_name}.{metric_name}.count', value)
         logger.debug(f'Sent {num_sent} metrics to graphite')
         await asyncio.sleep(delay)
         if duration > 0 and time.time() - t_s > duration:
@@ -45,12 +49,18 @@ async def monitor_remote_icmp(session, host, policy, resolver):
             if isinstance(packet, ICMPResponse):
                 packets_seen += 1
                 num_sent += await session.post('packets.sent', packets_seen)
+                num_sent += await session.post('packets.sent.max', packets_seen)
+                num_sent += await session.post('packets.sent.count', 1)
                 if packet.lost:
                     packets_lost += 1
                     num_sent += await session.post('packets.lost', packets_lost)
+                    num_sent += await session.post('packets.lost.max', packets_lost)
+                    num_sent += await session.post('packets.lost.count', 1)
                     continue
                 num_sent += await session.post('latency_ms', packet.time_ms)
                 num_sent += await session.post('packets.recv', packets_seen)
+                num_sent += await session.post('packets.recv.max', packets_seen)
+                num_sent += await session.post('packets.recv.count', 1)
     except AbnormalExit as e:
         logger.exception(f'Unexpected exit for {host}, code {e.code}')
     except asyncio.CancelledError:
@@ -60,6 +70,7 @@ async def monitor_remote_icmp(session, host, policy, resolver):
         raise
     else:
         logger.debug(f'Done with {host}')
+
 
 async def main(host, port, duration=-1, namespace='', *icmp_hosts):
     session = TCPGraphite(host, port, delay_max=1, namespace=namespace)
