@@ -6,10 +6,12 @@ import socket
 import struct
 import pickle
 import time
+import logging
 
 from pfstatsd import parse_host
-from pfstatsd.graphite import Session
+from pfstatsd.graphite import TCPGraphite
 
+logger = logging.getLogger(__name__)
 
 class Server:
     def __init__(self, socket, port):
@@ -20,6 +22,14 @@ class Server:
     def __iter__(self):
         yield self.socket
         yield self.port
+
+    async def get_socket(self, loop):
+        if not self._read_socket:
+            read_socket = self.socket
+            if self.socket.type == socket.SocketKind.SOCK_STREAM:
+                read_socket, _ = await loop.sock_accept(read_socket)
+            self._read_socket = read_socket
+        return self._read_socket
 
     @property
     def read_socket(self):
@@ -61,11 +71,8 @@ def event_loop():
 @pytest.fixture(scope='module')
 async def client(server):
     _, port = server
-    session = Session('localhost', port)
-    session.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # session.conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65535)
-    session.conn.connect(('localhost', port))
-    return session
+    session = TCPGraphite('localhost', port)
+    return await session.connect()
 
 
 @pytest.fixture(scope='module')
@@ -77,10 +84,21 @@ def server():
     server_port = server_socket.getsockname()[1]
     return Server(server_socket, server_port)
 
+@pytest.fixture(scope='function')
+def disposable_server():
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65535)
+    server_socket.bind((b'localhost', 0))
+    server_socket.listen(10)
+    server_port = server_socket.getsockname()[1]
+    return Server(server_socket, server_port)
+
 
 async def parse_metrics(event_loop, server):
     data = bytearray()
     message_length = None
+
+    await server.get_socket(event_loop)
 
     result_bytes = await event_loop.sock_recv(server.read_socket, 2048)
     while result_bytes:
@@ -109,8 +127,38 @@ async def test_simple_post(event_loop, server, client):
     assert metric.timestamp == 123
 
 @pytest.mark.asyncio
+async def test_broken_server(event_loop, disposable_server, client):
+    client = client.using('test_namespace', port=disposable_server.port)
+    await client.connect()
+    r = await disposable_server.get_socket(event_loop)
+    logger.debug('closing server')
+
+
+    logger.debug('sending first key')
+    client._append_metric('key', 1, 123, '')
+    await client.flush()
+    assert event_loop.sock_recv(r, 1024)
+    r.close()
+    disposable_server._read_socket = None
+    
+    logger.debug('Accepting new server conn')
+    r = await disposable_server.get_socket(event_loop)
+    assert event_loop.sock_recv(r, 1024)
+    r.close()
+    logger.debug('Closed new server conn')
+
+    logger.debug('sending second set')
+    client._append_metric('key', 1, 123, '')
+    client._append_metric('key', 1, 123, '')
+    client._append_metric('key', 1, 123, '')
+    client._append_metric('key', 1, 123, '')
+    client._append_metric('key', 1, 123, '')
+    await client.flush()
+
+
+@pytest.mark.asyncio
 async def test_queue_flushing(event_loop, server, client):
-    client = client.using('test_namespace', conn=client.conn)
+    client = client.using('test_namespace', conn=True)
     client.queue_max = 100
     client.delay_max = -1
     keys = ('abc', 'def', 'hij', 'kml')
