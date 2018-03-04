@@ -28,9 +28,11 @@ async def monitor_pf_queue(session, duration=-1, delay=0.5):
         for queue_name, queue_data in queue_status.items():
             # write the edge most queues to a flat key:
             for metric_name, value in queue_data.metrics.items():
-                num_sent += await session.post(f'{queue_name}.{metric_name}', value)
-                num_sent += await session.post(f'{queue_name}.{metric_name}.count', value)
-        logger.debug(f'Sent {num_sent} metrics to graphite')
+                key = f'{queue_name}.{metric_name}.count'
+                if metric_name == 'queue_load_factor':  # avg the loads in retention
+                    key = f'{queue_name}.{metric_name}'
+                num_sent += await session.post(key, value)
+        logger.debug(f'Sent {num_sent} pf metrics to graphite')
         await asyncio.sleep(delay)
         if duration > 0 and time.time() - t_s > duration:
             break
@@ -48,19 +50,15 @@ async def monitor_remote_icmp(session, host, policy, resolver):
             logger.debug(f'{host}->{packet!s}, {num_sent} sent so far')
             if isinstance(packet, ICMPResponse):
                 packets_seen += 1
-                num_sent += await session.post('packets.sent', packets_seen)
-                num_sent += await session.post('packets.sent.max', packets_seen)
-                num_sent += await session.post('packets.sent.count', 1)
+                num_sent += await session.post('packets.sent.count', packets_seen)
                 if packet.lost:
                     packets_lost += 1
-                    num_sent += await session.post('packets.lost', packets_lost)
-                    num_sent += await session.post('packets.lost.max', packets_lost)
-                    num_sent += await session.post('packets.lost.count', 1)
+                    num_sent += await session.post('packets.lost.count', packets_seen)
                     continue
                 num_sent += await session.post('latency_ms', packet.time_ms)
-                num_sent += await session.post('packets.recv', packets_seen)
-                num_sent += await session.post('packets.recv.max', packets_seen)
-                num_sent += await session.post('packets.recv.count', 1)
+                num_sent += await session.post('packets.recv.count', packets_seen)
+        logger.debug(f'sent {num_sent} ping metrics to graphite')
+
     except AbnormalExit as e:
         logger.exception(f'Unexpected exit for {host}, code {e.code}')
     except asyncio.CancelledError:
