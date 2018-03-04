@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import time
-import asyncio
+
 import aiodns
 import yaml
 
