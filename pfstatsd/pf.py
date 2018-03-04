@@ -14,13 +14,12 @@ METRIC_ALIASES = {
 }
 
 
-class QueueMetrics(collections.namedtuple('QueueMetrics', ['name', 'children', 'metrics', 'parent'])):
+class QueueMetrics(collections.namedtuple(
+        'QueueMetrics', ['name', 'children', 'metrics', 'parent'])):
     __slots__ = ()
 
     def __new__(cls, name, children, metrics, parent=None):
         return super().__new__(cls, name, children, metrics, parent)
-
-
 
 
 def parse_metric(line: str) -> dict:
@@ -54,7 +53,7 @@ def parse_metric(line: str) -> dict:
             has_metric_name = False
             value = ''.join(buf).strip()
             if '/' in value:
-                value = int(value[:value.index('/')]) / float(value[value.index('/')+1:])
+                value = int(value[:value.index('/')]) / float(value[value.index('/') + 1:])
             else:
                 value = int(value, 10)
             metrics[metric_name] = value
@@ -95,7 +94,7 @@ def parse_queue(stdout):
                 'metrics': {}
             }
             if line.endswith('}'):
-                start = line[line.rindex('{')+1:-1].split(', ')
+                start = line[line.rindex('{') + 1:-1].split(', ')
                 queue['children'] = tuple(start)
             queues[queue_name] = queue
             current_queue = queue_name
@@ -104,6 +103,7 @@ def parse_queue(stdout):
     return {
         queue_name: QueueMetrics(**queue) for queue_name, queue in queues.items()
     }
+
 
 def apply_parents(queues) -> Generator[Tuple[str, QueueMetrics], None, None]:
     reparented_keys = set()
@@ -125,7 +125,6 @@ def summarize_children(queues: dict) -> dict:
     So apply all the outer edges with metric values to the parent nodes
     '''
     averaged_nodes = set()
-    parents = []
     edges = tuple(queue for name, queue in queues.items() if not queue.children)
     for node in edges:
         metrics_to_apply = node.metrics
@@ -157,12 +156,16 @@ async def read_queue_status():
     logger.debug('got {} bytes from pfctl -s queue -v'.format(len(stdout)))
     if stderr:
         stderr = stderr.decode('utf8').strip()
-        logger.error(f'pfctl error: {stderr}')
+        extra = {'data': {}}
+        if '\n' in stderr:
+            stderr, extra['data']['line'] = stderr.split('\n', 1)[0], stderr
+        logger.warn(f'pfctl error: {stderr}', extra=extra)
     if fh.returncode:
         raise AbnormalExit(fh.returncode, stderr)
     await fh.wait()
     queues = summarize_children(dict(apply_parents(parse_queue(stdout))))
     return queues
+
 
 async def stream_queue_status():
     while True:
