@@ -9,6 +9,7 @@ from typing import Optional, Union
 
 from . import DEFAULT_STDOUT_FORMAT
 from . import uvloop
+from .protocols import ProtocolStateMachine
 
 
 logger = logging.getLogger(__name__)
@@ -35,21 +36,6 @@ class Session:
         self.delay_max = delay_max
         self.namespace = namespace
         self.last_flush_ts = -1
-        self.conn = None
-
-    async def connect(self, event_loop=None):
-        assert self.conn is None, 'call close first.'
-        if event_loop is None:
-            event_loop = asyncio.get_event_loop()
-        self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.conn.setblocking(False)
-        await event_loop.sock_connect(self.conn, (self.host, self.port))
-        return self.conn
-
-    def close(self):
-        if self.conn is not None:
-            self.conn.close()
-            self.conn = None
 
     def using(self, namespace: str, join=False, **kwargs):
         new_cls_kwargs = {
@@ -60,37 +46,10 @@ class Session:
             'delay_max': self.delay_max
         }
         new_cls_kwargs.update({
-            key: kwargs[value] for key, value in kwargs.keys() & new_cls_kwargs.keys()})
+            key: kwargs[key] for key in kwargs.keys() & new_cls_kwargs.keys()})
         if join and self.namespace:
             new_cls_kwargs['namespace'] = f'{self.namespace}.{new_cls_kwargs["namespace"]}'
-
-        item = self.__class__(**new_cls_kwargs)
-        if 'conn' in kwargs:
-            item.conn = kwargs['conn']
-        return item
-
-    async def flush(self, event_loop=None):
-        assert self.conn, 'connect() must be run first'
-        now = time.time()
-        length = len(self.queue)
-        if not length:
-            return 0
-
-        if event_loop is None:
-            event_loop = asyncio.get_event_loop()
-        payload = pickle.dumps(self.queue[:length], protocol=2)
-        self.queue[:] = self.queue[length:]
-
-        header = struct.pack("!L", len(payload))
-        message = header + payload
-        try:
-            await event_loop.sock_sendall(self.conn, message)
-        except IOError:
-            logger.exception('unexpected issue')
-            self.close()
-            await self.connect()
-        self.last_flush_ts = now
-        return length
+        return self.__class__(**new_cls_kwargs)
 
     def _append_metric(self, name, value, timestamp, namespace):
         assert ' ' not in name, 'spaces not allowed'
@@ -105,7 +64,8 @@ class Session:
 
 
     async def post(self, name: str, value: Union[int, float],
-                   timestamp: Optional[Union[int, float]]=None, namespace: Optional[str]=None):
+                   timestamp: Optional[Union[int, float]]=None, namespace: Optional[str]=None,
+                   *, loop=None):
         '''
         Post to the metric at ``name`` with value. Allow for custom
         timestamp (defaults to ``time.time()``)
@@ -114,10 +74,107 @@ class Session:
         num_sent = 0
         self._append_metric(name, value, timestamp, namespace)
         if self.delay_max != -1 and now - self.last_flush_ts >= self.delay_max:
-            num_sent = await self.flush()
+            num_sent = await self.flush(loop=loop)
         elif self.queue_max != -1 and len(self.queue) >= self.queue_max:
-            num_sent = await self.flush()
+            num_sent = await self.flush(loop=loop)
         return num_sent
+
+
+class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.transport = None
+        self._wait_for_connections = asyncio.Event()
+        self._trigger_reconnect = asyncio.Event()
+
+    def using(self, namespace: str, join=False, *, conn=False, **kwargs):
+        client = super().using(namespace, join, **kwargs)
+
+        if conn:
+            assert self.transport
+            client.transport = self.transport
+            client._wait_for_connections.set()
+            client._trigger_reconnect.clear()
+
+            future = asyncio.ensure_future(self.connect(loop=None))
+        return client
+
+    async def connect(self, *, loop=None):
+        if self._wait_for_connections.is_set():
+            logger.debug('reconnect code primed')
+            await self._trigger_reconnect.wait()
+            self._trigger_reconnect.clear()
+            logger.debug('Invoking reconnect code')
+            return await self.connect(loop=loop)
+
+        if loop is None:
+            loop = asyncio.get_event_loop()
+        logger.debug('Making connection to graphite')
+        await loop.create_connection(lambda: self, self.host, self.port)
+        logger.debug('Making connection to graphite [done]')
+        future = asyncio.ensure_future(self.connect(loop=loop))
+        return self
+
+    async def close(self):
+        if self.transport is None:
+            return
+        self.transport.close()
+        self.transport = None
+
+    def connection_made(self, transport):
+        super().connection_made(transport)
+        self.transport = transport
+        logger.debug('Connection established to {}'.format(transport))
+        self._wait_for_connections.set()
+
+    def data_received(self, data):
+        super().data_received(data)
+        logger.debug(f'Wasted data {data}')
+
+    def eof_received(self):
+        '''
+        Called when graphite is restarted, etc.
+
+        This should indicate reconnection.
+        '''
+        super().eof_received()
+        logger.debug(f'EOF received from {self.host}:{self.port}')
+        self._wait_for_connections.clear()
+        self._trigger_reconnect.set()
+        self.transport = None
+
+    def connection_lost(self, exc):
+        super().connection_lost(exc)
+
+        if self._wait_for_connections.is_set():
+            logger.debug('Connection was lost before an EOF appeared.')
+            self._trigger_reconnect.set()
+            self._wait_for_connections.clear()
+
+        if exc is not None:
+            logger.exception(
+                f'Graphite({self.host}:{self.port}) unexpectedly disconnected', exc_info=exc)
+        self.transport = None
+
+    async def flush(self, loop=None):
+        await self._wait_for_connections.wait()
+
+        now = time.time()
+        length = len(self.queue)
+        if not length:
+            return 0
+
+        if loop is None:
+            loop = asyncio.get_event_loop()
+        payload = pickle.dumps(self.queue[:length], protocol=2)
+        self.queue[:] = self.queue[length:]
+
+        header = struct.pack("!L", len(payload))
+        message = header + payload
+        self.transport.write(message)
+        self.last_flush_ts = now
+        return length
+
 
 if __name__ == '__main__':
     import argparse
@@ -145,7 +202,7 @@ if __name__ == '__main__':
 
     host, port = parse_host(args.host, default_port=2004)
 
-    client = Session(host, port)
+    client = TCPGraphite(host, port)
     async def main(client, args):
         logger.debug(f'Connecting to {client.host}:{client.port}')
         await client.connect()
