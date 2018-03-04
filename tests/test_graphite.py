@@ -126,6 +126,7 @@ async def test_simple_post(event_loop, server, client):
     assert metric.raw_value == 1
     assert metric.timestamp == 123
 
+
 @pytest.mark.asyncio
 async def test_broken_server(event_loop, disposable_server, client):
     client = client.using('test_namespace', port=disposable_server.port)
@@ -133,19 +134,12 @@ async def test_broken_server(event_loop, disposable_server, client):
     r = await disposable_server.get_socket(event_loop)
     logger.debug('closing server')
 
-
     logger.debug('sending first key')
     client._append_metric('key', 1, 123, '')
-    await client.flush()
+    client._flush()
     assert event_loop.sock_recv(r, 1024)
     r.close()
     disposable_server._read_socket = None
-    
-    logger.debug('Accepting new server conn')
-    r = await disposable_server.get_socket(event_loop)
-    assert event_loop.sock_recv(r, 1024)
-    r.close()
-    logger.debug('Closed new server conn')
 
     logger.debug('sending second set')
     client._append_metric('key', 1, 123, '')
@@ -154,6 +148,13 @@ async def test_broken_server(event_loop, disposable_server, client):
     client._append_metric('key', 1, 123, '')
     client._append_metric('key', 1, 123, '')
     await client.flush()
+    await asyncio.sleep(1)
+    logger.debug('Accepting new server conn')
+    r = await disposable_server.get_socket(event_loop)
+    assert event_loop.sock_recv(r, 1024)
+    r.close()
+    logger.debug('Closed new server conn')
+
 
 
 @pytest.mark.asyncio
