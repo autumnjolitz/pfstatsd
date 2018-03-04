@@ -7,7 +7,8 @@ from setuptools import (setup, find_packages)
 
 here = path.abspath(path.dirname(__file__))
 install_requirements = [
-    'aiodns~=1.1.1'
+    'aiodns~=1.1.1',
+    'PyYAML~=3.12',
 ]
 
 # The following are meant to avoid accidental upload/registration of this
@@ -32,13 +33,14 @@ setup(name='pfstatsd', version=__version__,
       packages=find_packages(exclude=['contrib', 'docs', 'tests*']),
       include_package_data=True,
       extras_require={
-          'tests': ['pytest~=3.3.1']
+          'tests': ['pytest~=3.4.1', 'pytest-asyncio~=0.8.0'],
+          'fast': ['uvloop~=0.9.1'],
       },
       install_requires=install_requirements,
       keywords=['pf', 'graphite'],
       url="https://github.com/benjolitz/pfstatsd",
       classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Topic :: Utilities",
-        "License :: OSI Approved :: BSD License",
+          "Development Status :: 3 - Alpha",
+          "Topic :: Utilities",
+          "License :: OSI Approved :: BSD License",
       ])
