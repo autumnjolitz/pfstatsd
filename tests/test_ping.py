@@ -30,7 +30,7 @@ async def test_ping(event_loop):
     packets = []
     async for packet in ping('127.0.0.1', exit_after=ExitAfterPolicy(5, Unit.Packets)):
         packets.append(packet)
-    assert len(packets) == 5
+    assert len(packets) >= 5
     t_s = time.time()
     packets[:] = []
     async for packet in ping('127.0.0.1', exit_after=ExitAfterPolicy(5, Unit.Seconds)):
