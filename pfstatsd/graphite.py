@@ -3,6 +3,7 @@ import logging
 import pickle
 import struct
 import time
+import errno
 from typing import Optional, Union
 
 from . import DEFAULT_STDOUT_FORMAT
@@ -85,27 +86,35 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         self._trigger_reconnect = asyncio.Event(loop=loop)
         self._retry_future = None
         self._flush_before_connect = None
+        self._initial_connect = None
 
     def using(self, namespace: str, join=False, *, conn=False, loop=None, **kwargs):
         client = super().using(namespace, join, **kwargs)
-
+        logger.debug('spawning subclient')
         if conn:
-            assert self.transport
-            client.transport = self.transport
-            client._wait_for_connections.set()
-            client._trigger_reconnect.clear()
-
-            client._retry_future = asyncio.ensure_future(self.connect(loop=loop))
+            logger.debug('... with connection starting')
+            client._initial_connect = asyncio.ensure_future(
+                client.connect(initial=True), loop=loop)
         return client
 
-    async def connect(self, *, loop=None):
-        if self._wait_for_connections.is_set():
-            logger.debug('reconnect code primed')
-            await self._trigger_reconnect.wait()
-            self._trigger_reconnect.clear()
-            logger.debug('Invoking reconnect code')
-            self._retry_future = None
-            return await self.connect(loop=loop)
+    async def _reconnect(self, *, loop=None):
+        await self._wait_for_connections.wait()
+        await self._trigger_reconnect.wait()
+
+        logger.debug('reconnect code primed')
+        logger.debug('Invoking reconnect code')
+        self._retry_future = None
+        self._trigger_reconnect.clear()
+        return await self.connect(loop=loop)
+
+    async def connect(self, *, loop=None, initial=False):
+        if self.current_state not in ('not_connected', 'connection_lost', 'eof_received'):
+            logger.debug('Already connected')
+            return self
+
+        if self._initial_connect and not initial:
+            logger.debug('Waiting on outstanding connect()')
+            return await self._initial_connect
 
         if loop is None:
             loop = asyncio.get_event_loop()
@@ -115,7 +124,17 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
             try:
                 await loop.create_connection(lambda: self, self.host, self.port)
                 break
-            except ConnectionRefusedError:
+            except (ConnectionError, OSError) as e:
+                if isinstance(e, OSError) and str(e).startswith('Multiple exceptions: '):
+                    errnos = set()
+                    for error in str(e)[len('Multiple exceptions: '):].split(','):
+                        if error.startswith('[Errno'):
+                            code = int(error[len('[Errno '):error.index(']')])
+                            errnos.add(code)
+                    if not (errnos & frozenset(
+                            (errno.ECONNREFUSED, errno.ECONNABORTED, errno.ECONNRESET))):
+                        raise
+
                 delay = 2 ** index
                 logger.error(
                     f'Unable to connect to {self.host}:{self.port}, retrying in {delay:.2f}s')
@@ -125,24 +144,39 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
                     index = 0
 
         logger.debug('Making connection to graphite [done]')
+        if self._initial_connect:
+            self._initial_connect = None
 
-        assert self._retry_future is None
-        self._retry_future = asyncio.ensure_future(self.connect(loop=loop))
+        prior_future = self._retry_future
+        self._retry_future = asyncio.ensure_future(self._reconnect(loop=loop))
+        if prior_future:
+            prior_future.cancel()
         return self
 
     async def close(self):
-        if self.transport is None:
-            return
         if self._retry_future:
             self._retry_future.cancel()
             self._retry_future = None
-        self.transport.close()
+        if self._flush_before_connect:
+            self._flush_before_connect.cancel()
+            self._flush_before_connect = None
+
+        if self.transport is not None:
+            self.transport.close()
+
+        self.current_state = 'not_connected'
         self.transport = None
+        self._wait_for_connections.clear()
+        self._trigger_reconnect.clear()
 
     def connection_made(self, transport):
+        if self.transport is not None:
+            logger.warn('multiple connect() called, duplicate transports found, closing extras')
+            transport.close()
+            return
+        logger.debug('Connection established to {}'.format(transport))
         super().connection_made(transport)
         self.transport = transport
-        logger.debug('Connection established to {}'.format(transport))
         self._wait_for_connections.set()
 
     def data_received(self, data):
@@ -174,10 +208,13 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
                 f'Graphite({self.host}:{self.port}) unexpectedly disconnected', exc_info=exc)
         self.transport = None
 
-    async def flush(self, loop=None):
+    async def flush(self, blocking=False, *, loop=None):
         length = len(self.queue)
         if not length:
             return 0
+
+        if blocking:
+            return await self._deferred_flush()
 
         if self._flush_before_connect:
             return 0
@@ -201,6 +238,7 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         finally:
             self._flush_before_connect = None
         logger.info(f'Sent {sent} blocked metrics!')
+        return sent
 
     def _flush(self):
         length = len(self.queue)
