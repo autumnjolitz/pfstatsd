@@ -13,17 +13,36 @@ from pfstatsd.graphite import TCPGraphite
 
 logger = logging.getLogger(__name__)
 
+
 class Server:
     def __init__(self, socket, port):
         self.socket = socket
         self.port = port
         self._read_socket = None
 
+    def stop(self):
+        self.socket.close()
+        return self
+
+    def restart(self):
+        self.stop()
+        self.start()
+        return self
+
+    def start(self):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.socket.bind((b'localhost', self.port))
+        self.socket.listen(10)
+        return self
+
     def __iter__(self):
         yield self.socket
         yield self.port
 
-    async def get_socket(self, loop):
+    async def get_socket(self, loop, force=False):
+        if force:
+            self._read_socket = None
         if not self._read_socket:
             read_socket = self.socket
             if self.socket.type == socket.SocketKind.SOCK_STREAM:
@@ -60,6 +79,7 @@ class Metric(collections.namedtuple('Metric', ['key', 'value'])):
     def timestamp(self):
         return self.value.timestamp
 
+
 sizeof_signed_long = len(struct.pack('!L', 1))
 
 
@@ -78,15 +98,18 @@ async def client(server):
 @pytest.fixture(scope='module')
 def server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     # server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65535)
     server_socket.bind((b'localhost', 0))
     server_socket.listen(10)
     server_port = server_socket.getsockname()[1]
     return Server(server_socket, server_port)
 
+
 @pytest.fixture(scope='function')
 def disposable_server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     # server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65535)
     server_socket.bind((b'localhost', 0))
     server_socket.listen(10)
@@ -110,7 +133,8 @@ async def parse_metrics(event_loop, server):
         if message_length == len(data):
             break
         result_bytes = await event_loop.sock_recv(
-            server.read_socket, message_length - len(data) if message_length - len(data) < 2048 else 2048)
+            server.read_socket, message_length - len(data)
+            if message_length - len(data) < 2048 else 2048)
 
     assert result_bytes, 'Parsed empty data from server socket?'
     message_body = memoryview(data)[sizeof_signed_long:]
@@ -128,40 +152,59 @@ async def test_simple_post(event_loop, server, client):
 
 
 @pytest.mark.asyncio
-async def test_broken_server(event_loop, disposable_server, client):
-    client = client.using('test_namespace', port=disposable_server.port)
+async def test_reconnect(event_loop, disposable_server, client):
+    server = disposable_server
+
+    # Test autoconnect:
+    client = client.using(
+        'test_namespace', conn=True, loop=event_loop, port=disposable_server.port)
+    await asyncio.sleep(0.1)  # non-zero wait time.
+    assert client.current_state == 'connection_made'
+
+    # Test a data send:
+    r = await server.get_socket(event_loop, force=True)
+    logger.debug('post')
+    result = await client.post('test', 10)
+    assert result > 0
+    data = await event_loop.sock_recv(r, 1024)
+    assert len(data) > 0
+
+    # Now simulate a shutdown:
+    r.shutdown(socket.SHUT_RDWR)
+    r.close()
+    server.stop()
+    # Let it sink in...
+    await asyncio.sleep(0.1)
+    assert client.current_state == 'connection_lost'
+
+    # Start it up again:
+    server.start()
+    # Test the case for "auto_reconnect" (we let the queued reconnect mechanism do the work:)
+    await asyncio.sleep(1.5)
+    assert client.current_state == 'connection_made'
+
+    # Let's now test an explicit "wait for connect:"
+    r = await server.get_socket(event_loop, force=True)
+    r.shutdown(socket.SHUT_RDWR)
+    r.close()
+    server.stop()
+    # Wait again a non-zero time...
+    await asyncio.sleep(0.1)
+    assert client.current_state == 'connection_lost'
+    server.start()
+    # Test explicit wait for connect.
     await client.connect()
-    r = await disposable_server.get_socket(event_loop)
-    logger.debug('closing server')
-
-    logger.debug('sending first key')
-    client._append_metric('key', 1, 123, '')
-    client._flush()
-    assert event_loop.sock_recv(r, 1024)
-    r.close()
-    disposable_server._read_socket = None
-
-    logger.debug('sending second set')
-    client._append_metric('key', 1, 123, '')
-    client._append_metric('key', 1, 123, '')
-    client._append_metric('key', 1, 123, '')
-    client._append_metric('key', 1, 123, '')
-    client._append_metric('key', 1, 123, '')
-    await client.flush()
-    await asyncio.sleep(1)
-    logger.debug('Accepting new server conn')
-    r = await disposable_server.get_socket(event_loop)
-    assert event_loop.sock_recv(r, 1024)
-    r.close()
-    logger.debug('Closed new server conn')
-
+    await server.get_socket(event_loop, force=True)
+    assert client.current_state == 'connection_made'
 
 
 @pytest.mark.asyncio
-async def test_queue_flushing(event_loop, server, client):
-    client = client.using('test_namespace', conn=True)
-    client.queue_max = 100
-    client.delay_max = -1
+async def test_queue_flushing(event_loop, disposable_server, client):
+    server = disposable_server
+
+    client = client.using('test_namespace', queue_max=-1, delay_max=-1, port=server.port)
+    await client.connect()
+
     keys = ('abc', 'def', 'hij', 'kml')
     futures = []
     expected_results = set()
@@ -172,13 +215,14 @@ async def test_queue_flushing(event_loop, server, client):
         value = random.randint(1, 23412)
         expected_results.add(Metric(f'test_namespace.{key}', (t_s, value)))
         futures.append(client.post(key, value, t_s))
-    num_sent = sum(await asyncio.gather(*futures))
+    await asyncio.gather(*futures)
+    num_sent = await client.flush(True)
     assert num_sent == count
     metrics = []
     while len(metrics) < count:
-        metrics.extend(await parse_metrics(event_loop, server))
+        results = await parse_metrics(event_loop, server)
+        metrics.extend(results)
     assert frozenset(metrics) == expected_results
-
 
 
 def test_parse_host():
