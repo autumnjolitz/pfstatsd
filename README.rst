@@ -27,6 +27,8 @@ Plans
 ------
 
 - rethink the ping resolve strat - it doesn't react well to DNS updates
+    + Pings need to retry when they die due to outages, at least after 5 minutes
+- redo the main entry point - it really should be the arbiter of timeouts. And break on any future loss.
 
 
 Quickstart
