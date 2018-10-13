@@ -9,6 +9,7 @@ here = path.abspath(path.dirname(__file__))
 install_requirements = [
     'aiodns~=1.1.1',
     'PyYAML~=3.12',
+    'cffi>=1.0.0',
 ]
 
 # The following are meant to avoid accidental upload/registration of this
@@ -36,6 +37,8 @@ setup(name='pfstatsd', version=__version__,
           'tests': ['pytest~=3.4.1', 'pytest-asyncio~=0.8.0'],
           'fast': ['uvloop~=0.9.1'],
       },
+      setup_requires=['cffi>=1.0.0'],
+      cffi_modules=["./pfstatsd/ifstats_build.py:ffibuilder"],
       install_requires=install_requirements,
       keywords=['pf', 'graphite'],
       url="https://github.com/benjolitz/pfstatsd",
