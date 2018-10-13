@@ -9,13 +9,47 @@ from . import DEFAULT_STDOUT_FORMAT, parse_host
 from .pf import stream_queue_status
 from .graphite import TCPGraphite
 from .ping import ping, ICMPResponse, AbnormalExit, ExitAfterPolicy, Unit
+from .ifstats import sample
 
 logger = logging.getLogger('pfstatsd')
 
 
-async def track_interface_statistics(session, interface_names):
-    # async for interface_name, in_bytes, out_bytes, timestamp in
-    pass
+async def track_interface_statistics(session):
+    session = session.using('ifstats', join=True)
+    await session.connect()
+    results = tuple(sample())  # establish initial fixes
+
+    interface_row_ordinals = tuple(result.row for result in results)
+    previous_results = {result.name: result for result in results}
+
+    futures = []
+    for result in results:
+        event_time = float(result.timestamp)
+        for key, value in result.list_metrics():
+            futures.append(session.post(
+                f'{result.name}.{key}.bytes', value, timestamp=event_time))
+    del results
+    await asyncio.gather(*futures)
+    logger.info(f'Posted {len(futures)} to graphite for if stats (bootstrap)')
+    while True:
+        await asyncio.sleep(4)
+        try:
+            futures[:] = []
+            for result in sample(*interface_row_ordinals):
+                event_time = float(result.timestamp)
+                for key, value in result.list_metrics():
+                    futures.append(session.post(
+                        f'{result.name}.{key}.bytes', value, timestamp=event_time))
+                delta = result - previous_results[result.name]
+                for key, value in delta.as_labeled_rates():
+                    futures.append(session.post(
+                        f'{result.name}.{key}.rate', value, timestamp=event_time))
+                previous_results[result.name] = result
+            await asyncio.gather(*futures)
+            logger.info(f'Posted {len(futures)} to graphite for if stats')
+        except Exception:
+            logger.exception('wtf')
+            raise
 
 
 async def monitor_pf_queue(session, duration=-1, delay=0.5):
@@ -85,7 +119,7 @@ async def main(host, port, duration=-1, namespace='', *icmp_hosts):
             policy = ExitAfterPolicy(duration, Unit.Seconds)
     pf_status = asyncio.ensure_future(monitor_pf_queue(session, duration))
     done, pending = await asyncio.wait(
-        [pf_status] +
+        [pf_status, track_interface_statistics(session)] +
         [monitor_remote_icmp(session, host, policy, resolver) for host in icmp_hosts],
         return_when=asyncio.FIRST_EXCEPTION)
     if pf_status in done and pf_status.exception() is not None:
