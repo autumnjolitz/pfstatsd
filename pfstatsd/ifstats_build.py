@@ -106,7 +106,7 @@ struct ifstats get_stats(int row) {
        name[4] = row;
        name[5] = IFDATA_GENERAL;
 
-       len = sizeof(&ifmd);
+       len = sizeof(ifmd);
 
        (void) gettimeofday(&tv, NULL);
        if (sysctl(name, 6, &ifmd, &len, (void *)0, 0) == -1) {
