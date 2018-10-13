@@ -23,6 +23,11 @@ Supports
     + Lost packets ⚠️ (doesn't handle blackholes correctly yet)
 
 
+Plans
+------
+
+- rethink the ping resolve strat - it doesn't react well to DNS updates
+
 
 Quickstart
 ------------
