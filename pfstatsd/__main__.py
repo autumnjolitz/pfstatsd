@@ -13,6 +13,11 @@ from .ping import ping, ICMPResponse, AbnormalExit, ExitAfterPolicy, Unit
 logger = logging.getLogger('pfstatsd')
 
 
+async def track_interface_statistics(session, interface_names):
+    # async for interface_name, in_bytes, out_bytes, timestamp in
+    pass
+
+
 async def monitor_pf_queue(session, duration=-1, delay=0.5):
     '''
     Monitor the queue status, send metrics to a defined session.
