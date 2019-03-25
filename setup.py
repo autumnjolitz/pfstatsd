@@ -8,7 +8,7 @@ from setuptools import (setup, find_packages)
 here = path.abspath(path.dirname(__file__))
 install_requirements = [
     'aiodns~=1.1.1',
-    'PyYAML~=3.12',
+    'PyYAML>=5.1',
     'cffi>=1.0.0',
 ]
 
