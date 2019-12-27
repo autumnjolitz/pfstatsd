@@ -27,7 +27,7 @@ if __version__ is None:
     raise IOError('about.py in project lacks __version__!')
 
 setup(name='pfstatsd', version=__version__,
-      author='Ben Jolitz',
+      author='Autumn Jolitz',
       description='measure my pf stats',
       long_description=long_description,
       license='BSD',
@@ -41,7 +41,7 @@ setup(name='pfstatsd', version=__version__,
       cffi_modules=["./pfstatsd/ifstats_build.py:ffibuilder"],
       install_requires=install_requirements,
       keywords=['pf', 'graphite'],
-      url="https://github.com/benjolitz/pfstatsd",
+      url="https://github.com/autumnjolitz/pfstatsd",
       classifiers=[
           "Development Status :: 3 - Alpha",
           "Topic :: Utilities",
