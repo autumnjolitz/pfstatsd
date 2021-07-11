@@ -7,15 +7,14 @@ from typing import Generator, Tuple
 from . import AbnormalExit
 
 logger = logging.getLogger(__name__)
-READ_QUEUE_STATUS = 'pfctl -s queue -v'
+READ_QUEUE_STATUS = "pfctl -s queue -v"
 
-METRIC_ALIASES = {
-    'qlength': 'queue_load_factor'
-}
+METRIC_ALIASES = {"qlength": "queue_load_factor"}
 
 
-class QueueMetrics(collections.namedtuple(
-        'QueueMetrics', ['name', 'children', 'metrics', 'parent'])):
+class QueueMetrics(
+    collections.namedtuple("QueueMetrics", ["name", "children", "metrics", "parent"])
+):
     __slots__ = ()
 
     def __new__(cls, name, children, metrics, parent=None):
@@ -30,17 +29,17 @@ def parse_metric(line: str) -> dict:
     metrics = {}
     prev_char = None
     for char in line[1:-1]:
-        if char == ':' and not has_metric_name:
+        if char == ":" and not has_metric_name:
             has_metric_name = True
             # lines often have something like "metric pkts ### bytes ####", so dupe the key name
-            if metric_name and metric_name.endswith('pkts'):
+            if metric_name and metric_name.endswith("pkts"):
                 buf.insert(0, metric_name)
 
                 # [key, 'bytes'] -> [key, ' ', 'bytes']
-                if buf[1] != ' ':
-                    buf.insert(1, ' ')
+                if buf[1] != " ":
+                    buf.insert(1, " ")
 
-            metric_name = ''.join(buf).strip().replace(' ', '_')
+            metric_name = "".join(buf).strip().replace(" ", "_")
             metric_name = METRIC_ALIASES.get(metric_name, metric_name)
 
             buf[:] = []
@@ -48,12 +47,12 @@ def parse_metric(line: str) -> dict:
 
         if char.isdigit() and not has_metric_value and has_metric_name:
             has_metric_value = True
-        elif has_metric_value and char == ' ' and prev_char != '/':
+        elif has_metric_value and char == " " and prev_char != "/":
             has_metric_value = False
             has_metric_name = False
-            value = ''.join(buf).strip()
-            if '/' in value:
-                value = int(value[:value.index('/')]) / float(value[value.index('/') + 1:])
+            value = "".join(buf).strip()
+            if "/" in value:
+                value = int(value[: value.index("/")]) / float(value[value.index("/") + 1 :])
             else:
                 value = int(value, 10)
             metrics[metric_name] = value
@@ -66,43 +65,37 @@ def parse_metric(line: str) -> dict:
 
 def parse_queue(stdout):
     if isinstance(stdout, bytes):
-        stdout = stdout.decode('utf8')
+        stdout = stdout.decode("utf8")
     queues = {}
     current_queue = None
     for line in stdout.splitlines(True):
         if not line:
             continue
         line = line.strip()
-        if line.startswith('queue '):
-            queue_name = line[len('queue '):]
+        if line.startswith("queue "):
+            queue_name = line[len("queue ") :]
             no_name = True
             level = 0
             buf = []
             for char in queue_name:
-                if char == ' ':
+                if char == " ":
                     if no_name:
                         level += 1
                         continue
                     break
-                if char != ' ':
+                if char != " ":
                     no_name = False
                     buf.append(char)
-            queue_name = ''.join(buf).replace(' ', '_')
-            queue = {
-                'name': queue_name,
-                'children': [],
-                'metrics': {}
-            }
-            if line.endswith('}'):
-                start = line[line.rindex('{') + 1:-1].split(', ')
-                queue['children'] = tuple(start)
+            queue_name = "".join(buf).replace(" ", "_")
+            queue = {"name": queue_name, "children": [], "metrics": {}}
+            if line.endswith("}"):
+                start = line[line.rindex("{") + 1 : -1].split(", ")
+                queue["children"] = tuple(start)
             queues[queue_name] = queue
             current_queue = queue_name
-        if line.startswith('[ '):
-            queues[current_queue]['metrics'].update(parse_metric(line))
-    return {
-        queue_name: QueueMetrics(**queue) for queue_name, queue in queues.items()
-    }
+        if line.startswith("[ "):
+            queues[current_queue]["metrics"].update(parse_metric(line))
+    return {queue_name: QueueMetrics(**queue) for queue_name, queue in queues.items()}
 
 
 def apply_parents(queues) -> Generator[Tuple[str, QueueMetrics], None, None]:
@@ -119,11 +112,11 @@ def apply_parents(queues) -> Generator[Tuple[str, QueueMetrics], None, None]:
 
 
 def summarize_children(queues: dict) -> dict:
-    '''
+    """
     All parent queues have zeroed counters.
 
     So apply all the outer edges with metric values to the parent nodes
-    '''
+    """
     averaged_nodes = set()
     edges = tuple(queue for name, queue in queues.items() if not queue.children)
     for node in edges:
@@ -141,7 +134,7 @@ def summarize_children(queues: dict) -> dict:
         parent = queues[node.parent]
         if parent.name in averaged_nodes:
             continue
-        parent.metrics['queue_load_factor'] /= len(parent.children)
+        parent.metrics["queue_load_factor"] /= len(parent.children)
         averaged_nodes.add(parent.name)
         stack.append(parent)
 
@@ -150,16 +143,16 @@ def summarize_children(queues: dict) -> dict:
 
 async def read_queue_status():
     fh = await asyncio.create_subprocess_exec(
-        *shlex.split(READ_QUEUE_STATUS), stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
+        *shlex.split(READ_QUEUE_STATUS), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
     stdout, stderr = await fh.communicate()
-    logger.debug('got {} bytes from pfctl -s queue -v'.format(len(stdout)))
+    logger.debug("got {} bytes from pfctl -s queue -v".format(len(stdout)))
     if stderr:
-        stderr = stderr.decode('utf8').strip()
-        extra = {'data': {}}
-        if '\n' in stderr:
-            stderr, extra['data']['line'] = stderr.split('\n', 1)[0], stderr
-        logger.warn(f'pfctl error: {stderr}', extra=extra)
+        stderr = stderr.decode("utf8").strip()
+        extra = {"data": {}}
+        if "\n" in stderr:
+            stderr, extra["data"]["line"] = stderr.split("\n", 1)[0], stderr
+        logger.warn(f"pfctl error: {stderr}", extra=extra)
     if fh.returncode:
         raise AbnormalExit(fh.returncode, stderr)
     await fh.wait()
@@ -169,7 +162,7 @@ async def read_queue_status():
 
 async def stream_queue_status():
     while True:
-        logger.debug('Reading queue status')
+        logger.debug("Reading queue status")
         queues = await read_queue_status()
         queues = {key: value for key, value in queues.items() if not value.children}
         yield queues

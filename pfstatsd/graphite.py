@@ -17,15 +17,24 @@ Length = int
 
 
 class Session:
-    def __init__(self, host, port=2004, namespace='', queue_max: Length=100,
-                 delay_max: Seconds=10, **kwargs):
+    def __init__(
+        self,
+        host,
+        port=2004,
+        namespace="",
+        queue_max: Length = 100,
+        delay_max: Seconds = 10,
+        **kwargs,
+    ):
         assert isinstance(port, int) and port > 0
         assert host and isinstance(host, str)
-        assert isinstance(queue_max, int) and queue_max > 0 or queue_max == -1, \
-            'Non-zero queue limit or -1 to disable'
-        assert delay_max > 0 or delay_max == -1, 'Non-zero delays required or -1 to disable'
-        assert all(char in ('.', '_', '-') or char.isalnum() for char in namespace), \
-            f'Namespaces ({namespace!r}) must be in regex of [A-Za-z0-9\.]'
+        assert (
+            isinstance(queue_max, int) and queue_max > 0 or queue_max == -1
+        ), "Non-zero queue limit or -1 to disable"
+        assert delay_max > 0 or delay_max == -1, "Non-zero delays required or -1 to disable"
+        assert all(
+            char in (".", "_", "-") or char.isalnum() for char in namespace
+        ), f"Namespaces ({namespace!r}) must be in regex of [A-Za-z0-9\.]"
 
         self.host = host
         self.port = port
@@ -38,36 +47,41 @@ class Session:
 
     def using(self, namespace: str, join=False, **kwargs):
         new_cls_kwargs = {
-            'host': self.host,
-            'port': self.port,
-            'namespace': namespace,
-            'queue_max': self.queue_max,
-            'delay_max': self.delay_max
+            "host": self.host,
+            "port": self.port,
+            "namespace": namespace,
+            "queue_max": self.queue_max,
+            "delay_max": self.delay_max,
         }
-        new_cls_kwargs.update({
-            key: kwargs[key] for key in kwargs.keys() & new_cls_kwargs.keys()})
+        new_cls_kwargs.update({key: kwargs[key] for key in kwargs.keys() & new_cls_kwargs.keys()})
         if join and self.namespace:
-            new_cls_kwargs['namespace'] = f'{self.namespace}.{new_cls_kwargs["namespace"]}'
+            new_cls_kwargs["namespace"] = f'{self.namespace}.{new_cls_kwargs["namespace"]}'
         return self.__class__(**new_cls_kwargs)
 
     def _append_metric(self, name, value, timestamp, namespace):
-        assert ' ' not in name, 'spaces not allowed'
-        assert name, 'need a name'
-        assert isinstance(value, (int, float)), 'Must be a numeric value!'
+        assert " " not in name, "spaces not allowed"
+        assert name, "need a name"
+        assert isinstance(value, (int, float)), "Must be a numeric value!"
 
         if namespace is None:
             namespace = self.namespace
         if namespace:
-            name = f'{namespace}.{name}'
-        self.queue.append((name, (timestamp or time.time(), value,)))
+            name = f"{namespace}.{name}"
+        self.queue.append((name, (timestamp or time.time(), value)))
 
-    async def post(self, name: str, value: Union[int, float],
-                   timestamp: Optional[Union[int, float]]=None, namespace: Optional[str]=None,
-                   *, loop=None):
-        '''
+    async def post(
+        self,
+        name: str,
+        value: Union[int, float],
+        timestamp: Optional[Union[int, float]] = None,
+        namespace: Optional[str] = None,
+        *,
+        loop=None,
+    ):
+        """
         Post to the metric at ``name`` with value. Allow for custom
         timestamp (defaults to ``time.time()``)
-        '''
+        """
         now = time.time()
         num_sent = 0
         self._append_metric(name, value, timestamp, namespace)
@@ -90,60 +104,62 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
 
     def using(self, namespace: str, join=False, *, conn=False, loop=None, **kwargs):
         client = super().using(namespace, join, **kwargs)
-        logger.debug('spawning subclient')
+        logger.debug("spawning subclient")
         if conn:
-            logger.debug('... with connection starting')
-            client._initial_connect = asyncio.ensure_future(
-                client.connect(initial=True), loop=loop)
+            logger.debug("... with connection starting")
+            client._initial_connect = asyncio.ensure_future(client.connect(initial=True), loop=loop)
         return client
 
     async def _reconnect(self, *, loop=None):
         await self._wait_for_connections.wait()
         await self._trigger_reconnect.wait()
 
-        logger.debug('reconnect code primed')
-        logger.debug('Invoking reconnect code')
+        logger.debug("reconnect code primed")
+        logger.debug("Invoking reconnect code")
         self._retry_future = None
         self._trigger_reconnect.clear()
         return await self.connect(loop=loop)
 
     async def connect(self, *, loop=None, initial=False):
-        if self.current_state not in ('not_connected', 'connection_lost', 'eof_received'):
-            logger.debug('Already connected')
+        if self.current_state not in ("not_connected", "connection_lost", "eof_received"):
+            logger.debug("Already connected")
             return self
 
         if self._initial_connect and not initial:
-            logger.debug('Waiting on outstanding connect()')
+            logger.debug("Waiting on outstanding connect()")
             return await self._initial_connect
 
         if loop is None:
             loop = asyncio.get_event_loop()
-        logger.debug('Making connection to graphite')
+        logger.debug("Making connection to graphite")
         index = 0
         while True:
             try:
                 await loop.create_connection(lambda: self, self.host, self.port)
                 break
             except (ConnectionError, OSError) as e:
-                if isinstance(e, OSError) and str(e).startswith('Multiple exceptions: '):
+                if isinstance(e, OSError) and str(e).startswith("Multiple exceptions: "):
                     errnos = set()
-                    for error in str(e)[len('Multiple exceptions: '):].split(','):
-                        if error.startswith('[Errno'):
-                            code = int(error[len('[Errno '):error.index(']')])
+                    for error in str(e)[len("Multiple exceptions: ") :].split(","):
+                        if error.startswith("[Errno"):
+                            code = int(error[len("[Errno ") : error.index("]")])
                             errnos.add(code)
-                    if not (errnos & frozenset(
-                            (errno.ECONNREFUSED, errno.ECONNABORTED, errno.ECONNRESET))):
+                    if not (
+                        errnos
+                        & frozenset((errno.ECONNREFUSED, errno.ECONNABORTED, errno.ECONNRESET))
+                    ):
                         raise
 
                 delay = 2 ** index
                 logger.error(
-                    f'Unable to connect to {self.host}:{self.port}, retrying in {delay:.2f}s')
+                    f"Unable to connect to {self.host}:{self.port}, retrying in {delay:.2f}s"
+                )
                 await asyncio.sleep(delay)
                 index += 1
                 if index > 3:
                     index = 0
 
-        logger.debug('Making connection to graphite [done]')
+        logger.debug("Making connection to graphite [done]")
         if self._initial_connect:
             self._initial_connect = None
 
@@ -164,33 +180,33 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         if self.transport is not None:
             self.transport.close()
 
-        self.current_state = 'not_connected'
+        self.current_state = "not_connected"
         self.transport = None
         self._wait_for_connections.clear()
         self._trigger_reconnect.clear()
 
     def connection_made(self, transport):
         if self.transport is not None:
-            logger.warn('multiple connect() called, duplicate transports found, closing extras')
+            logger.warn("multiple connect() called, duplicate transports found, closing extras")
             transport.close()
             return
-        logger.debug('Connection established to {}'.format(transport))
+        logger.debug("Connection established to {}".format(transport))
         super().connection_made(transport)
         self.transport = transport
         self._wait_for_connections.set()
 
     def data_received(self, data):
         super().data_received(data)
-        logger.debug(f'Wasted data {data}')
+        logger.debug(f"Wasted data {data}")
 
     def eof_received(self):
-        '''
+        """
         Called when graphite is restarted, etc.
 
         This should indicate reconnection.
-        '''
+        """
         super().eof_received()
-        logger.debug(f'EOF received from {self.host}:{self.port}')
+        logger.debug(f"EOF received from {self.host}:{self.port}")
         self._wait_for_connections.clear()
         self._trigger_reconnect.set()
         self.transport = None
@@ -199,13 +215,14 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         super().connection_lost(exc)
 
         if self._wait_for_connections.is_set():
-            logger.debug('Connection was lost before an EOF appeared.')
+            logger.debug("Connection was lost before an EOF appeared.")
             self._trigger_reconnect.set()
             self._wait_for_connections.clear()
 
         if exc is not None:
             logger.exception(
-                f'Graphite({self.host}:{self.port}) unexpectedly disconnected', exc_info=exc)
+                f"Graphite({self.host}:{self.port}) unexpectedly disconnected", exc_info=exc
+            )
         self.transport = None
 
     async def flush(self, blocking=False, *, loop=None):
@@ -224,20 +241,20 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         return self._flush()
 
     async def _deferred_flush(self):
-        '''Block until the connection is up.
+        """Block until the connection is up.
 
         This is used as a way to create a single task in the event loop responsible
         for making sure paused metrics will be sent when connection is re-established.
-        '''
+        """
         try:
             await self._wait_for_connections.wait()
             sent = self._flush()
         except Exception:
-            logger.exception('Unexpected error in deferred flush')
+            logger.exception("Unexpected error in deferred flush")
             raise
         finally:
             self._flush_before_connect = None
-        logger.info(f'Sent {sent} blocked metrics!')
+        logger.info(f"Sent {sent} blocked metrics!")
         return sent
 
     def _flush(self):
@@ -259,17 +276,17 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         return length
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
     from . import parse_host
     from . import uvloop
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-d', '--debug', action='store_true', default=False)
-    parser.add_argument('host', help='hostname:[port] to send to, defaults to port 2004')
-    parser.add_argument('key', help='metric key')
-    parser.add_argument('value')
-    parser.add_argument('timestamp', default=None, type=float, nargs='?')
+    parser.add_argument("-d", "--debug", action="store_true", default=False)
+    parser.add_argument("host", help="hostname:[port] to send to, defaults to port 2004")
+    parser.add_argument("key", help="metric key")
+    parser.add_argument("value")
+    parser.add_argument("timestamp", default=None, type=float, nargs="?")
 
     args = parser.parse_args()
     handler = logging.StreamHandler()
@@ -289,14 +306,14 @@ if __name__ == '__main__':
     client = TCPGraphite(host, port)
 
     async def main(client, args):
-        logger.debug(f'Connecting to {client.host}:{client.port}')
+        logger.debug(f"Connecting to {client.host}:{client.port}")
         await client.connect()
-        logger.debug(f'Posting {args.key} -> {args.value} (@{args.timestamp})')
+        logger.debug(f"Posting {args.key} -> {args.value} (@{args.timestamp})")
         await client.post(args.key, args.value, args.timestamp)
-        logger.debug('Flushing')
+        logger.debug("Flushing")
         await client.flush()
-        logger.debug('Done')
+        logger.debug("Done")
 
-    uvloop and logger.debug('Using uvloop')
+    uvloop and logger.debug("Using uvloop")
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main(client, args))

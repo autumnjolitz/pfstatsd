@@ -6,10 +6,10 @@ from ._ifstats import ffi, lib
 logger = logging.getLogger(__name__)
 
 
-class Sample(namedtuple('Sample', ['row', 'name', 'in_bytes', 'out_bytes', 'timestamp'])):
+class Sample(namedtuple("Sample", ["row", "name", "in_bytes", "out_bytes", "timestamp"])):
     def __sub__(self, other):
         if not (self.row == other.row and self.name == other.name):
-            raise ValueError('Invalid comparison - row or name differ')
+            raise ValueError("Invalid comparison - row or name differ")
         timespan = self.timestamp - other.timestamp
         deltas = []
         keys = []
@@ -23,13 +23,13 @@ class Sample(namedtuple('Sample', ['row', 'name', 'in_bytes', 'out_bytes', 'time
             yield label, value
 
 
-class Rate(namedtuple('Rate', ['labels', 'deltas', 'timespan'])):
+class Rate(namedtuple("Rate", ["labels", "deltas", "timespan"])):
     def as_labeled_rates(self):
         for label, delta in zip(self.labels, self.deltas):
             yield label, delta / self.timespan
 
 
-class Timestamp(namedtuple('Timestamp', ['seconds', 'microseconds'])):
+class Timestamp(namedtuple("Timestamp", ["seconds", "microseconds"])):
     def __sub__(self, other):
         s_diff = self.seconds - other.seconds
         s_udiff = self.microseconds - other.microseconds
@@ -46,12 +46,11 @@ def sample(*rows):
         result = lib.get_stats(ordinal)
         ts = Timestamp(result.timestamp.tv_sec, result.timestamp.tv_usec)
         if not result.name:
-            logger.error(f'{ordinal} gave an empty interface name!')
+            logger.error(f"{ordinal} gave an empty interface name!")
             continue
         if result.status:
-            logger.warn(f'{ordinal} is not accessible')
+            logger.warn(f"{ordinal} is not accessible")
             continue
         yield Sample(
-            ordinal,
-            ffi.string(result.name).decode('utf8'),
-            result.ibytes, result.obytes, ts)
+            ordinal, ffi.string(result.name).decode("utf8"), result.ibytes, result.obytes, ts
+        )

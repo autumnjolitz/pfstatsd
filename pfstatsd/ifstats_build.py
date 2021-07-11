@@ -1,7 +1,8 @@
 from cffi import FFI
 
 ffibuilder = FFI()
-ffibuilder.cdef('''
+ffibuilder.cdef(
+    """
 enum status {
    ...
 };
@@ -39,10 +40,11 @@ int sysctlnametomib(const char *name, int *mibp, size_t *sizep);
 
 int get_if_limit(void);
 
-    ''')
+    """
+)
 ffibuilder.set_source(
-    'pfstatsd._ifstats',
-    r'''
+    "pfstatsd._ifstats",
+    r"""
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
@@ -123,7 +125,8 @@ struct ifstats get_stats(int row) {
        strncpy(stats.name, ifmd.ifmd_name, IFNAMSIZ);
        return stats;
 };
-    ''')
+    """,
+)
 
 if __name__ == "__main__":
     ffibuilder.compile(verbose=True)
