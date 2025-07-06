@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=77", "cffi>=1.0.0,<2.0.0a0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pfstatsd"
+dynamic = ["version"]
+description = "measure my pf stats"
+readme.content-type = "text/x-rst"
+readme.file = "README.rst"
+requires-python = ">=3.12"
+license = "BSD-3-Clause"
+license-files = [
+  "LICENSE",
+]
+authors = [
+    { name = "Autumn Jolitz" },
+]
+keywords = [
+    "graphite",
+    "pf",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "aiodns>=3.5.0,<4.0.0a0",
+    "cffi>=1.0.0,<2.0.0a0",
+    "PyYAML>=6.0.2,<7.0.0a0",
+]
+
+[project.optional-dependencies]
+fast = [
+    "uvloop>=0.21.0,<1.0.0a0",
+]
+tests = [
+    "pytest-asyncio~=1.0.0",
+    "pytest>=8.2,<9",
+]
+
+[project.urls]
+Homepage = "https://github.com/autumnjolitz/pfstatsd"
+
+[tool.setuptools.dynamic]
+version = {attr = "pfstatsd._version.__version__"}  # any module attribute compatible with ast.literal_eval
+readme = {file = ["README.rst"], content-type = "text/x-rst"}
+
+[tool.setuptools.packages.find]
+include = ["pfstatsd"]

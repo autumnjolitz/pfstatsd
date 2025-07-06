@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+import sys
 
 import aiodns
 import yaml
@@ -26,7 +27,9 @@ async def track_interface_statistics(session):
     for result in results:
         event_time = float(result.timestamp)
         for key, value in result.list_metrics():
-            futures.append(session.post(f"{result.name}.{key}.bytes", value, timestamp=event_time))
+            futures.append(
+                session.post(f"{result.name}.{key}.bytes", value, timestamp=event_time)
+            )
     del results
     await asyncio.gather(*futures)
     logger.info(f"Posted {len(futures)} to graphite for if stats (bootstrap)")
@@ -38,12 +41,16 @@ async def track_interface_statistics(session):
                 event_time = float(result.timestamp)
                 for key, value in result.list_metrics():
                     futures.append(
-                        session.post(f"{result.name}.{key}.bytes", value, timestamp=event_time)
+                        session.post(
+                            f"{result.name}.{key}.bytes", value, timestamp=event_time
+                        )
                     )
                 delta = result - previous_results[result.name]
                 for key, value in delta.as_labeled_rates():
                     futures.append(
-                        session.post(f"{result.name}.{key}.rate", value, timestamp=event_time)
+                        session.post(
+                            f"{result.name}.{key}.rate", value, timestamp=event_time
+                        )
                     )
                 previous_results[result.name] = result
             await asyncio.gather(*futures)
@@ -127,11 +134,15 @@ async def main(host, port, duration=-1, namespace="", *icmp_hosts):
     if pf_status in done and pf_status.exception() is not None:
         for future in pending:
             future.cancel()
-        logger.exception("Could not gather PF information, fatal", exc_info=pf_status.exception())
+        logger.exception(
+            "Could not gather PF information, fatal", exc_info=pf_status.exception()
+        )
         raise SystemExit(1)
 
     if pending:
-        remainder, pending = await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
+        remainder, pending = await asyncio.wait(
+            pending, return_when=asyncio.ALL_COMPLETED
+        )
         assert not pending
         for future in done | remainder:
             try:
@@ -145,17 +156,22 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(prog="pfstatsd")
+    parser.set_defaults(mode=None)
     parser.add_argument("-d", "--debug", action="store_true", default=False)
     parser.add_argument("--sudo", action="store_true", default=False, dest="use_sudo")
 
     subparsers = parser.add_subparsers()
     config_parser = subparsers.add_parser("from")
-    config_parser.add_argument("config_file", type=argparse.FileType("rb"), help="config file")
+    config_parser.set_defaults(mode="file")
+    config_parser.add_argument(
+        "config_file", type=argparse.FileType("rb"), help="config file"
+    )
     config_parser.add_argument(
         "-t", "--time-limit", type=float, default=-1, help="Limit on how long this runs"
     )
 
     run_parser = subparsers.add_parser("run")
+    run_parser.set_defaults(mode="file")
     run_parser.add_argument(
         "-n",
         "--namespace",
@@ -170,6 +186,10 @@ if __name__ == "__main__":
     run_parser.add_argument("remote_hosts", help="hosts to ping", nargs="+")
 
     args = parser.parse_args()
+    if args.mode is None:
+        print("No mode given!", file=sys.stderr)
+        parser.print_help(sys.stderr)
+        raise SystemExit(2)
 
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(DEFAULT_STDOUT_FORMAT))
@@ -198,4 +218,6 @@ if __name__ == "__main__":
         pf.READ_QUEUE_STATUS = f"sudo {pf.READ_QUEUE_STATUS}"
 
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(main(host, port, args.time_limit, args.namespace, *args.remote_hosts))
+    loop.run_until_complete(
+        main(host, port, args.time_limit, args.namespace, *args.remote_hosts)
+    )

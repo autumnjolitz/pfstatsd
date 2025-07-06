@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Iterable
+from collections.abc import Iterable
 import logging
 import asyncio
 import subprocess
@@ -59,7 +59,9 @@ def parse_metric(line: str) -> dict:
             has_metric_name = False
             value = "".join(buf).strip()
             if "/" in value:
-                value = int(value[: value.index("/")]) / float(value[value.index("/") + 1 :])
+                value = int(value[: value.index("/")]) / float(
+                    value[value.index("/") + 1 :]
+                )
             else:
                 value = int(value, 10)
             metrics[metric_name] = value

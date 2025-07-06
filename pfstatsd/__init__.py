@@ -12,7 +12,7 @@ else:
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 
-from .about import __version__
+from ._version import __version__
 
 __version__  # Silence unused import warning.
 
