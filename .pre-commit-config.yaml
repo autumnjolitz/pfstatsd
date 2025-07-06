@@ -1,9 +1,44 @@
 repos:
--   repo: https://github.com/python/black
-    rev: 21.6b0
+  -
+    repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
     hooks:
-    - id: black
-      language_version: /usr/local/bin/python3
-      args:
-        - '--config'
-        - '.black.toml'
+      -
+        id: check-ast
+        exclude: |
+            (?x)^(
+                tests\/test_(.*)_([\d]+)\.py
+            )$
+      -
+        id: check-case-conflict
+      -
+        id: check-executables-have-shebangs
+      -
+        id: check-merge-conflict
+      -
+        id: check-yaml
+      -
+        id: end-of-file-fixer
+      -
+        id: check-shebang-scripts-are-executable
+      -
+        id: detect-private-key
+      -
+        id: trailing-whitespace
+        args:
+          - '--markdown-linebreak-ext=rst'
+  -
+    repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.12.2
+    hooks:
+      # Run the linter.
+      - id: ruff
+        args: [  --target-version, py312, --fix ]
+      - id: ruff
+        alias: ruff-check
+        args: [  --target-version, py312 ]
+      # Run the formatter.
+      - id: ruff-format
+        args: [  --target-version, py312 ]
+

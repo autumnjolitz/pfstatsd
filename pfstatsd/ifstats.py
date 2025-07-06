@@ -1,13 +1,21 @@
+from __future__ import annotations
+
 import logging
-from collections import namedtuple
+from typing import NamedTuple, Self
 
 from ._ifstats import ffi, lib
 
 logger = logging.getLogger(__name__)
 
 
-class Sample(namedtuple("Sample", ["row", "name", "in_bytes", "out_bytes", "timestamp"])):
-    def __sub__(self, other):
+class Sample(NamedTuple):
+    row: int
+    name: str
+    in_bytes: int
+    out_bytes: int
+    timestamp: Timestamp
+
+    def __sub__(self: Self, other: Self) -> Rate:
         if not (self.row == other.row and self.name == other.name):
             raise ValueError("Invalid comparison - row or name differ")
         timespan = self.timestamp - other.timestamp
@@ -23,13 +31,21 @@ class Sample(namedtuple("Sample", ["row", "name", "in_bytes", "out_bytes", "time
             yield label, value
 
 
-class Rate(namedtuple("Rate", ["labels", "deltas", "timespan"])):
+
+class Rate(NamedTuple):
+    labels: tuple[str, ...]
+    deltas: tuple[float | int, ...]
+    timespan: float | int
+
     def as_labeled_rates(self):
         for label, delta in zip(self.labels, self.deltas):
             yield label, delta / self.timespan
 
 
-class Timestamp(namedtuple("Timestamp", ["seconds", "microseconds"])):
+class Timestamp(NamedTuple):
+    seconds: int
+    microseconds: int
+
     def __sub__(self, other):
         s_diff = self.seconds - other.seconds
         s_udiff = self.microseconds - other.microseconds

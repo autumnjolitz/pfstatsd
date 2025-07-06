@@ -9,6 +9,7 @@ import socket
 import time
 from enum import Enum
 from ipaddress import ip_address, IPv4Address, IPv6Address
+from typing import NamedTuple
 
 import aiodns
 
@@ -18,7 +19,12 @@ from . import AbnormalExit
 logger = logging.getLogger(__name__)
 
 
-class PingPreamble(collections.namedtuple("PingPreamble", ("ip", "host"))):
+class _PingPreamble(NamedTuple):
+    ip: str
+    host: str
+
+
+class PingPreamble(_PingPreamble):
     __slots__ = ()
 
     def __new__(cls, host, ip=None):
@@ -30,11 +36,15 @@ class PingPreamble(collections.namedtuple("PingPreamble", ("ip", "host"))):
         return f"PING {self.host} ({self.ip}): 56 data bytes"
 
 
-class ICMPResponse(
-    collections.namedtuple(
-        "ICMPResponse", ["host", "time_ms", "icmp_seq", "ttl", "packet_size_bytes"]
-    )
-):
+class _ICMPResponse(NamedTuple):
+    host: str
+    time_ms: float | int
+    icmp_seq: int
+    ttl: int
+    packet_size_bytes: int
+
+
+class ICMPResponse(_ICMPResponse):
     __slots__ = ()
 
     def __new__(cls, host, time_ms, icmp_seq, ttl, packet_size_bytes):
@@ -64,7 +74,7 @@ class Unit(Enum):
     Packets = 2
 
 
-class ExitAfterPolicy(object):
+class ExitAfterPolicy:
 
     __slots__ = ("value", "unit", "other_policies")
 

@@ -1,9 +1,11 @@
-import collections
+from __future__ import annotations
+
+from collections import Iterable
 import logging
 import asyncio
 import subprocess
 import shlex
-from typing import Generator, Tuple
+from typing import NamedTuple
 from . import AbnormalExit
 
 logger = logging.getLogger(__name__)
@@ -12,9 +14,14 @@ READ_QUEUE_STATUS = "pfctl -s queue -v"
 METRIC_ALIASES = {"qlength": "queue_load_factor"}
 
 
-class QueueMetrics(
-    collections.namedtuple("QueueMetrics", ["name", "children", "metrics", "parent"])
-):
+class _QueueMetrics(NamedTuple):
+    name: str
+    children: tuple[str, ...]
+    metrics: dict[str, float | int]
+    parent: QueueMetrics | None
+
+
+class QueueMetrics(_QueueMetrics):
     __slots__ = ()
 
     def __new__(cls, name, children, metrics, parent=None):
@@ -98,7 +105,7 @@ def parse_queue(stdout):
     return {queue_name: QueueMetrics(**queue) for queue_name, queue in queues.items()}
 
 
-def apply_parents(queues) -> Generator[Tuple[str, QueueMetrics], None, None]:
+def apply_parents(queues) -> Iterable[tuple[str, QueueMetrics]]:
     reparented_keys = set()
     for name, queue in queues.items():
         for child_name in queue.children:

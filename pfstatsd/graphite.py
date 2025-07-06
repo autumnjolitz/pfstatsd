@@ -4,7 +4,7 @@ import pickle
 import struct
 import time
 import errno
-from typing import Optional, Union
+
 
 from . import DEFAULT_STDOUT_FORMAT
 from .protocols import ProtocolStateMachine
@@ -72,9 +72,9 @@ class Session:
     async def post(
         self,
         name: str,
-        value: Union[int, float],
-        timestamp: Optional[Union[int, float]] = None,
-        namespace: Optional[str] = None,
+        value: int | float,
+        timestamp: int | float | None = None,
+        namespace: str | None = None,
         *,
         loop=None,
     ):
