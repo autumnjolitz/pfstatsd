@@ -1,5 +1,4 @@
 import asyncio
-import collections
 import itertools
 import logging
 import math
@@ -75,7 +74,6 @@ class Unit(Enum):
 
 
 class ExitAfterPolicy:
-
     __slots__ = ("value", "unit", "other_policies")
 
     def __init__(self, value, unit, other_policies=None):
@@ -100,7 +98,9 @@ class ExitAfterPolicy:
 
     def __or__(self, other):
         assert isinstance(other, self.__class__)
-        return self.__class__(self.value, self.unit, other_policies=self.other_policies + (other,))
+        return self.__class__(
+            self.value, self.unit, other_policies=self.other_policies + (other,)
+        )
 
 
 async def random_resolve(
@@ -142,9 +142,13 @@ async def ping(
     """
     assert exit_after is None or isinstance(exit_after, ExitAfterPolicy)
     assert isinstance(host, (str, IPv4Address, IPv6Address))
+    if loop is None:
+        loop = asyncio.get_running_loop()
     ip = host
     if isinstance(host, str):
-        ip = await random_resolve(host, resolver=resolver, sock_types=sock_types, loop=loop)
+        ip = await random_resolve(
+            host, resolver=resolver, sock_types=sock_types, loop=loop
+        )
 
     ping_command = "ping"
     if isinstance(host, IPv6Address):
@@ -163,12 +167,18 @@ async def ping(
             stdin=asyncio.subprocess.PIPE,
         )
 
-        should_exit = lambda *args: False
+        def do_nothing(*args):
+            return False
+
+        should_exit = do_nothing
         if exit_after:
             should_exit = exit_after.poll
         while not should_exit(time.time() - t_s, packet_count):
             ready, pending = await asyncio.wait(
-                (ping_handle.stderr.readline(), ping_handle.stdout.readline()),
+                (
+                    loop.create_task(ping_handle.stderr.readline()),
+                    loop.create_task(ping_handle.stdout.readline()),
+                ),
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for p in pending:
@@ -191,12 +201,21 @@ async def ping(
                         continue
                     if packet.lost:
                         packet = packet._replace(host=ip)
-                    if last_seq_index is not None and packet.icmp_seq - last_seq_index > 1:
+                    if (
+                        last_seq_index is not None
+                        and packet.icmp_seq - last_seq_index > 1
+                    ):
                         logger.debug(
-                            "Detected {} lost packets!".format(packet.icmp_seq - last_seq_index - 1)
+                            "Detected {} lost packets!".format(
+                                packet.icmp_seq - last_seq_index - 1
+                            )
                         )
-                        for lost_packet_index in range(last_seq_index + 1, packet.icmp_seq):
-                            yield ICMPResponse(ip, float("inf"), lost_packet_index, 0, None)
+                        for lost_packet_index in range(
+                            last_seq_index + 1, packet.icmp_seq
+                        ):
+                            yield ICMPResponse(
+                                ip, float("inf"), lost_packet_index, 0, None
+                            )
                     yield packet
                     packet_count += 1
                     last_seq_index = packet.icmp_seq
@@ -272,13 +291,17 @@ def parse_line(line: bytes):
 
             for index, char in enumerate(line_view[:-index]):
                 if char == ord(b" ") or index == end_index:
-                    values[fields[field_index]] = bytes(line_view[field_start_index:index])
+                    values[fields[field_index]] = bytes(
+                        line_view[field_start_index:index]
+                    )
                     field_index += 1
                     field_start_index = index + 1
                     continue
             else:
                 packet_size_unit = values.pop("packet_size_unit")
-                assert packet_size_unit == b"bytes", f"packet size is {packet_size_unit!r}"
+                assert packet_size_unit == b"bytes", (
+                    f"packet size is {packet_size_unit!r}"
+                )
                 del packet_size_unit
 
                 values["packet_size_bytes"] = values.pop("packet_size")
@@ -338,7 +361,7 @@ if __name__ == "__main__":
             exit_policy |= item
 
     loop = asyncio.get_event_loop()
-    task = asyncio.ensure_future(main(args.destination, exit_policy))
+    task = loop.create_task(main(args.destination, exit_policy))
     try:
         loop.run_until_complete(task)
     except KeyboardInterrupt:

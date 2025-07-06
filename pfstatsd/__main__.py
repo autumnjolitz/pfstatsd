@@ -119,16 +119,20 @@ async def monitor_remote_icmp(session, host, policy, resolver):
 
 
 async def main(host, port, duration=-1, namespace="", *icmp_hosts):
+    loop = asyncio.get_running_loop()
     session = TCPGraphite(host, port, delay_max=1, namespace=namespace)
     if icmp_hosts:
         resolver = aiodns.DNSResolver()
         policy = None
         if duration > 0:
             policy = ExitAfterPolicy(duration, Unit.Seconds)
-    pf_status = asyncio.ensure_future(monitor_pf_queue(session, duration))
+    pf_status = loop.create_task(monitor_pf_queue(session, duration))
     done, pending = await asyncio.wait(
-        [pf_status, track_interface_statistics(session)]
-        + [monitor_remote_icmp(session, host, policy, resolver) for host in icmp_hosts],
+        [pf_status, loop.create_task(track_interface_statistics(session))]
+        + [
+            loop.create_task(monitor_remote_icmp(session, host, policy, resolver))
+            for host in icmp_hosts
+        ],
         return_when=asyncio.FIRST_EXCEPTION,
     )
     if pf_status in done and pf_status.exception() is not None:
@@ -200,7 +204,7 @@ if __name__ == "__main__":
 
     try:
         with closing(args.config_file) as fh:
-            config = yaml.load(fh)
+            config = yaml.safe_load(fh)
         host, port = config["graphite"]
     except AttributeError:
         host, port = parse_host(args.host, default_port=2004)

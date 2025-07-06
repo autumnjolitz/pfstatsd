@@ -28,13 +28,15 @@ class Session:
     ):
         assert isinstance(port, int) and port > 0
         assert host and isinstance(host, str)
-        assert (
-            isinstance(queue_max, int) and queue_max > 0 or queue_max == -1
-        ), "Non-zero queue limit or -1 to disable"
-        assert delay_max > 0 or delay_max == -1, "Non-zero delays required or -1 to disable"
-        assert all(
-            char in (".", "_", "-") or char.isalnum() for char in namespace
-        ), f"Namespaces ({namespace!r}) must be in regex of [A-Za-z0-9\.]"
+        assert isinstance(queue_max, int) and queue_max > 0 or queue_max == -1, (
+            "Non-zero queue limit or -1 to disable"
+        )
+        assert delay_max > 0 or delay_max == -1, (
+            "Non-zero delays required or -1 to disable"
+        )
+        assert all(char in (".", "_", "-") or char.isalnum() for char in namespace), (
+            f"Namespaces ({namespace!r}) must be in regex of [A-Za-z0-9\.]"
+        )
 
         self.host = host
         self.port = port
@@ -53,9 +55,13 @@ class Session:
             "queue_max": self.queue_max,
             "delay_max": self.delay_max,
         }
-        new_cls_kwargs.update({key: kwargs[key] for key in kwargs.keys() & new_cls_kwargs.keys()})
+        new_cls_kwargs.update(
+            {key: kwargs[key] for key in kwargs.keys() & new_cls_kwargs.keys()}
+        )
         if join and self.namespace:
-            new_cls_kwargs["namespace"] = f'{self.namespace}.{new_cls_kwargs["namespace"]}'
+            new_cls_kwargs["namespace"] = (
+                f"{self.namespace}.{new_cls_kwargs['namespace']}"
+            )
         return self.__class__(**new_cls_kwargs)
 
     def _append_metric(self, name, value, timestamp, namespace):
@@ -75,8 +81,6 @@ class Session:
         value: int | float,
         timestamp: int | float | None = None,
         namespace: str | None = None,
-        *,
-        loop=None,
     ):
         """
         Post to the metric at ``name`` with value. Allow for custom
@@ -86,18 +90,18 @@ class Session:
         num_sent = 0
         self._append_metric(name, value, timestamp, namespace)
         if self.delay_max != -1 and now - self.last_flush_ts >= self.delay_max:
-            num_sent = await self.flush(loop=loop)
+            num_sent = await self.flush()
         elif self.queue_max != -1 and len(self.queue) >= self.queue_max:
-            num_sent = await self.flush(loop=loop)
+            num_sent = await self.flush()
         return num_sent
 
 
 class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
-    def __init__(self, *args, loop=None, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.transport = None
-        self._wait_for_connections = asyncio.Event(loop=loop)
-        self._trigger_reconnect = asyncio.Event(loop=loop)
+        self._wait_for_connections = asyncio.Event()
+        self._trigger_reconnect = asyncio.Event()
         self._retry_future = None
         self._flush_before_connect = None
         self._initial_connect = None
@@ -107,10 +111,12 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         logger.debug("spawning subclient")
         if conn:
             logger.debug("... with connection starting")
-            client._initial_connect = asyncio.ensure_future(client.connect(initial=True), loop=loop)
+            if loop is None:
+                loop = asyncio.get_running_loop()
+            client._initial_connect = loop.create_task(client.connect(initial=True))
         return client
 
-    async def _reconnect(self, *, loop=None):
+    async def _reconnect(self):
         await self._wait_for_connections.wait()
         await self._trigger_reconnect.wait()
 
@@ -118,19 +124,21 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         logger.debug("Invoking reconnect code")
         self._retry_future = None
         self._trigger_reconnect.clear()
-        return await self.connect(loop=loop)
+        return await self.connect()
 
-    async def connect(self, *, loop=None, initial=False):
-        if self.current_state not in ("not_connected", "connection_lost", "eof_received"):
+    async def connect(self, *, initial=False):
+        if self.current_state not in (
+            "not_connected",
+            "connection_lost",
+            "eof_received",
+        ):
             logger.debug("Already connected")
             return self
 
         if self._initial_connect and not initial:
             logger.debug("Waiting on outstanding connect()")
             return await self._initial_connect
-
-        if loop is None:
-            loop = asyncio.get_event_loop()
+        loop = asyncio.get_event_loop()
         logger.debug("Making connection to graphite")
         index = 0
         while True:
@@ -138,7 +146,9 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
                 await loop.create_connection(lambda: self, self.host, self.port)
                 break
             except (ConnectionError, OSError) as e:
-                if isinstance(e, OSError) and str(e).startswith("Multiple exceptions: "):
+                if isinstance(e, OSError) and str(e).startswith(
+                    "Multiple exceptions: "
+                ):
                     errnos = set()
                     for error in str(e)[len("Multiple exceptions: ") :].split(","):
                         if error.startswith("[Errno"):
@@ -146,11 +156,13 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
                             errnos.add(code)
                     if not (
                         errnos
-                        & frozenset((errno.ECONNREFUSED, errno.ECONNABORTED, errno.ECONNRESET))
+                        & frozenset(
+                            (errno.ECONNREFUSED, errno.ECONNABORTED, errno.ECONNRESET)
+                        )
                     ):
                         raise
 
-                delay = 2 ** index
+                delay = 2**index
                 logger.error(
                     f"Unable to connect to {self.host}:{self.port}, retrying in {delay:.2f}s"
                 )
@@ -164,7 +176,7 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
             self._initial_connect = None
 
         prior_future = self._retry_future
-        self._retry_future = asyncio.ensure_future(self._reconnect(loop=loop))
+        self._retry_future = asyncio.ensure_future(self._reconnect())
         if prior_future:
             prior_future.cancel()
         return self
@@ -187,7 +199,9 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
 
     def connection_made(self, transport):
         if self.transport is not None:
-            logger.warn("multiple connect() called, duplicate transports found, closing extras")
+            logger.warn(
+                "multiple connect() called, duplicate transports found, closing extras"
+            )
             transport.close()
             return
         logger.debug("Connection established to {}".format(transport))
@@ -221,11 +235,13 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
 
         if exc is not None:
             logger.exception(
-                f"Graphite({self.host}:{self.port}) unexpectedly disconnected", exc_info=exc
+                f"Graphite({self.host}:{self.port}) unexpectedly disconnected",
+                exc_info=exc,
             )
         self.transport = None
 
-    async def flush(self, blocking=False, *, loop=None):
+    async def flush(self, blocking=False):
+        loop = asyncio.get_running_loop()
         length = len(self.queue)
         if not length:
             return 0
@@ -236,7 +252,7 @@ class TCPGraphite(ProtocolStateMachine, Session, asyncio.Protocol):
         if self._flush_before_connect:
             return 0
         if not self._wait_for_connections.is_set():
-            self._flush_before_connect = asyncio.ensure_future(self._deferred_flush(), loop=loop)
+            self._flush_before_connect = loop.create_task(self._deferred_flush())
             return 0
         return self._flush()
 
@@ -283,7 +299,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--debug", action="store_true", default=False)
-    parser.add_argument("host", help="hostname:[port] to send to, defaults to port 2004")
+    parser.add_argument(
+        "host", help="hostname:[port] to send to, defaults to port 2004"
+    )
     parser.add_argument("key", help="metric key")
     parser.add_argument("value")
     parser.add_argument("timestamp", default=None, type=float, nargs="?")
