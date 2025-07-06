@@ -3,47 +3,54 @@ from codecs import open  # To use a consistent encoding
 from os import path
 
 # Always prefer setuptools over distutils
-from setuptools import (setup, find_packages)
+from setuptools import setup, find_packages
 
 here = path.abspath(path.dirname(__file__))
 install_requirements = [
-    'aiodns~=1.1.1',
-    'PyYAML>=5.1',
-    'cffi>=1.0.0',
+    "aiodns>=3.5.0,<4.0.0a0",
+    "PyYAML>=6.0.2,<7.0.0a0",
+    "cffi>=1.0.0,<2.0.0a0",
 ]
 
 # The following are meant to avoid accidental upload/registration of this
 # package in the Python Package Index (PyPi)
-pypi_operations = frozenset(['register', 'upload']) & frozenset([x.lower() for x in sys.argv])
+pypi_operations = frozenset(["register", "upload"]) & frozenset(
+    [x.lower() for x in sys.argv]
+)
 if pypi_operations:
-    raise ValueError('Command(s) {} disabled in this example.'.format(', '.join(pypi_operations)))
+    raise ValueError(
+        "Command(s) {} disabled in this example.".format(", ".join(pypi_operations))
+    )
 
-with open(path.join(here, 'README.rst'), encoding='utf-8') as fh:
+with open(path.join(here, "README.rst"), encoding="utf-8") as fh:
     long_description = fh.read()
 
 __version__ = None
-exec(open('pfstatsd/about.py').read())
+exec(open("pfstatsd/about.py").read())
 if __version__ is None:
-    raise IOError('about.py in project lacks __version__!')
+    raise IOError("about.py in project lacks __version__!")
 
-setup(name='pfstatsd', version=__version__,
-      author='Autumn Jolitz',
-      description='measure my pf stats',
-      long_description=long_description,
-      license='BSD',
-      packages=find_packages(exclude=['contrib', 'docs', 'tests*']),
-      include_package_data=True,
-      extras_require={
-          'tests': ['pytest~=3.4.1', 'pytest-asyncio~=0.8.0'],
-          'fast': ['uvloop~=0.9.1'],
-      },
-      setup_requires=['cffi>=1.0.0'],
-      cffi_modules=["./pfstatsd/ifstats_build.py:ffibuilder"],
-      install_requires=install_requirements,
-      keywords=['pf', 'graphite'],
-      url="https://github.com/autumnjolitz/pfstatsd",
-      classifiers=[
-          "Development Status :: 3 - Alpha",
-          "Topic :: Utilities",
-          "License :: OSI Approved :: BSD License",
-      ])
+setup(
+    name="pfstatsd",
+    version=__version__,
+    author="Autumn Jolitz",
+    description="measure my pf stats",
+    long_description=long_description,
+    license="BSD",
+    packages=find_packages(exclude=["contrib", "docs", "tests*"]),
+    include_package_data=True,
+    extras_require={
+        "tests": ["pytest~=3.4.1", "pytest-asyncio~=0.8.0"],
+        "fast": ["uvloop>=0.21.0,<1.0.0a0"],
+    },
+    setup_requires=["cffi>=1.0.0,2.0.0a0"],
+    cffi_modules=["./pfstatsd/ifstats_build.py:ffibuilder"],
+    install_requires=install_requirements,
+    keywords=["pf", "graphite"],
+    url="https://github.com/autumnjolitz/pfstatsd",
+    classifiers=[
+        "Development Status :: 3 - Alpha",
+        "Topic :: Utilities",
+        "License :: OSI Approved :: BSD License",
+    ],
+)
