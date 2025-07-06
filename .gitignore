@@ -11,3 +11,7 @@ build/
 
 *.sublime-project
 *.sublime-workspace
+
+# ignore venv in either python/ or ``.python``
+[pP]ython
+.[pP]ython
